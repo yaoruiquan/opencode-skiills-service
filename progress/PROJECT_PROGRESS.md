@@ -205,6 +205,48 @@ OK
 Docker OpenCode -> .env API key -> DeepSeek Anthropic API -> deepseek-v4-flash -> OpenCode run
 ```
 
+### 8. 任务 API 服务
+
+已新增 `skills-api` 服务，监听：
+
+```text
+http://127.0.0.1:4100
+```
+
+服务文件：
+
+```text
+backend/server.js
+```
+
+当前能力：
+
+- 创建 job。
+- 写入输入文件。
+- 异步调用 OpenCode Server。
+- 查询 job 状态。
+- 查询运行日志。
+- 列出输出文件。
+- 下载输出文件。
+- 遇到 `Selected model is at capacity` 时自动重试并尝试备用模型。
+
+任务目录规范：
+
+```text
+/data/work/jobs/{job_id}/input
+/data/work/jobs/{job_id}/output
+/data/work/jobs/{job_id}/logs
+/data/work/jobs/{job_id}/job.json
+```
+
+已完成一次端到端 smoke test：
+
+1. 创建 job。
+2. 写入 `input/article.md`。
+3. 通过 `/run` 调用 OpenCode。
+4. OpenCode 读取输入文件并写入 `output/summary.txt`。
+5. 通过 API 成功读取输出文件。
+
 ## 当前项目状态
 
 已经完成本地 PoC 的主链路：
@@ -216,6 +258,7 @@ Docker OpenCode -> .env API key -> DeepSeek Anthropic API -> deepseek-v4-flash -
 - Chrome DevTools MCP 三路连接成功。
 - Web UI 可访问。
 - API 可创建和读取 session。
+- `skills-api` 可创建任务、写入输入文件、触发 OpenCode 并读取输出。
 
 当前还不是生产部署形态，但已经具备后续服务化开发的基础。
 
@@ -231,7 +274,7 @@ Docker OpenCode -> .env API key -> DeepSeek Anthropic API -> deepseek-v4-flash -
 
 ### 2. 前端/API 封装
 
-当前直接使用 OpenCode Web UI 和 OpenCode API。
+当前已经有最小任务 API，后续可以在其上继续封装前端。
 
 后续如果要做自己的前端，建议增加一个轻量后端层：
 
@@ -287,5 +330,5 @@ docker compose --profile docker-browser up -d --build
 
 1. 用 Web UI 跑一次 `md2wechat` 最小任务，确认 skill 调用链路。
 2. 固化一个“任务输入目录 -> 任务执行 -> 输出目录”的 API 协议。
-3. 写一个简单 backend wrapper，对接 OpenCode session API。
+3. 基于 `skills-api` 增加前端页面或更完整的任务模板。
 4. 再考虑迁移服务器和 Docker 内 Chrome。

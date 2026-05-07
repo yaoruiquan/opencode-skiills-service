@@ -76,6 +76,72 @@ Web UI:
 http://127.0.0.1:4096/app?directory=/data/work
 ```
 
+## 任务 API
+
+启动任务 API：
+
+```bash
+docker compose up -d --build opencode-server skills-api
+```
+
+API 地址：
+
+```text
+http://127.0.0.1:4100
+```
+
+健康检查：
+
+```bash
+curl http://127.0.0.1:4100/health
+```
+
+创建任务：
+
+```bash
+curl -sS -X POST http://127.0.0.1:4100/jobs \
+  -H 'Content-Type: application/json' \
+  -d '{"type":"md2wechat","title":"测试任务"}'
+```
+
+写入输入文件：
+
+```bash
+curl -sS -X POST http://127.0.0.1:4100/jobs/{job_id}/files \
+  -H 'Content-Type: application/json' \
+  -d '{"filename":"article.md","content":"# 测试标题\n\n测试正文"}'
+```
+
+启动任务：
+
+```bash
+curl -sS -X POST http://127.0.0.1:4100/jobs/{job_id}/run \
+  -H 'Content-Type: application/json' \
+  -d '{"prompt":"读取 /data/work/jobs/{job_id}/input/article.md，生成一个简短摘要并写入 /data/work/jobs/{job_id}/output/summary.txt"}'
+```
+
+查看任务、日志和输出：
+
+```bash
+curl http://127.0.0.1:4100/jobs/{job_id}
+curl http://127.0.0.1:4100/jobs/{job_id}/logs
+curl http://127.0.0.1:4100/jobs/{job_id}/outputs
+```
+
+任务 API 会把所有输入和输出限制在：
+
+```text
+/data/work/jobs/{job_id}
+```
+
+如果 DeepSeek 返回 `Selected model is at capacity`，API 会自动重试一次，并按配置尝试备用模型：
+
+```env
+OPENCODE_FALLBACK_MODELS=deepseek-anthropic/deepseek-v4-pro
+OPENCODE_CAPACITY_RETRIES=1
+OPENCODE_CAPACITY_RETRY_DELAY_MS=5000
+```
+
 默认 PoC 使用宿主机 Chrome 调试口，并让容器通过 Docker Desktop 宿主机网关 IP 访问。
 
 当前 OpenCode Server 镜像基于官方 `ghcr.io/anomalyco/opencode:latest`，额外安装 `node/npm/curl/python`，并预装 `chrome-devtools-mcp@0.25.0`，避免运行时每次通过 `npx @latest` 拉包。

@@ -30,6 +30,32 @@ services:
       - "4096"
       - --print-logs
 
+  skills-api:
+    image: opencode-skills-service-opencode:local
+    container_name: opencode-skills-api
+    depends_on:
+      - opencode-server
+    env_file:
+      - .env
+    ports:
+      - "127.0.0.1:4100:4100"
+    environment:
+      NODE_ENV: production
+      SKILLS_API_PORT: "4100"
+      SKILLS_API_JOBS_ROOT: /data/work/jobs
+      OPENCODE_SERVER_URL: http://opencode-server:4096
+      OPENCODE_RUN_MODEL: ${OPENCODE_PROVIDER_ID:-deepseek-anthropic}/${OPENCODE_MODEL:-deepseek-v4-flash}
+      OPENCODE_FALLBACK_MODELS: ${OPENCODE_FALLBACK_MODELS:-deepseek-anthropic/deepseek-v4-pro}
+      OPENCODE_CAPACITY_RETRIES: ${OPENCODE_CAPACITY_RETRIES:-1}
+      OPENCODE_CAPACITY_RETRY_DELAY_MS: ${OPENCODE_CAPACITY_RETRY_DELAY_MS:-5000}
+    volumes:
+      - ./backend:/app:ro
+      - ./data/work:/data/work
+      - ./data/output:/data/output
+    entrypoint:
+      - node
+      - /app/server.js
+
   browser-cnvd:
     profiles:
       - docker-browser
