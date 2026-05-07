@@ -2,9 +2,11 @@
 data/output/*
 data/work/*
 data/chrome-profiles/*
+data/docker-chrome-profiles/*
 !data/output/.gitkeep
 !data/work/.gitkeep
 !data/chrome-profiles/.gitkeep
+!data/docker-chrome-profiles/.gitkeep
 !data/chrome-profiles/cnvd-report/
 data/chrome-profiles/cnvd-report/*
 !data/chrome-profiles/cnvd-report/.gitkeep

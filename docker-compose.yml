@@ -12,8 +12,14 @@ services:
       - "127.0.0.1:4096:4096"
     environment:
       NODE_ENV: production
+      CHROME_DEVTOOLS_CNVD_HOST: ${CHROME_DEVTOOLS_CNVD_HOST:-browser-cnvd}
+      CHROME_DEVTOOLS_CNNVD_HOST: ${CHROME_DEVTOOLS_CNNVD_HOST:-browser-cnnvd}
+      CHROME_DEVTOOLS_NCC_HOST: ${CHROME_DEVTOOLS_NCC_HOST:-browser-ncc}
+      CHROME_DEVTOOLS_CNVD_PORT: ${CHROME_DEVTOOLS_CNVD_PORT:-9332}
+      CHROME_DEVTOOLS_CNNVD_PORT: ${CHROME_DEVTOOLS_CNNVD_PORT:-9333}
+      CHROME_DEVTOOLS_NCC_PORT: ${CHROME_DEVTOOLS_NCC_PORT:-9334}
     volumes:
-      - /Users/yao/.claude/skills:/root/.agents/skills:ro
+      - ${SKILLS_HOST_DIR:-/Users/yao/.claude/skills}:/root/.agents/skills:ro
       - ./config/opencode.template.json:/opt/opencode/templates/opencode.template.json:ro
       - opencode-config:/root/.config/opencode
       - ../vulns:/data/input:ro
@@ -56,6 +62,22 @@ services:
       - node
       - /app/server.js
 
+  frontend:
+    image: opencode-skills-service-opencode:local
+    container_name: opencode-skills-frontend
+    depends_on:
+      - skills-api
+    ports:
+      - "127.0.0.1:4101:4101"
+    environment:
+      NODE_ENV: production
+      FRONTEND_PORT: "4101"
+    volumes:
+      - ./frontend:/app:ro
+    entrypoint:
+      - node
+      - /app/server.js
+
   browser-cnvd:
     profiles:
       - docker-browser
@@ -65,10 +87,16 @@ services:
       CHROME_REMOTE_DEBUGGING_PORT: "9332"
       CHROME_PROFILE_DIR: /home/chrome/profile
     ports:
-      - "127.0.0.1:9332:9332"
+      - "127.0.0.1:19332:9332"
     volumes:
-      - ./data/chrome-profiles/cnvd-report:/home/chrome/profile
+      - ./data/docker-chrome-profiles/cnvd-report:/home/chrome/profile
     shm_size: "1gb"
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS http://127.0.0.1:$${CHROME_REMOTE_DEBUGGING_PORT}/json/version >/dev/null"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 10s
 
   browser-cnnvd:
     profiles:
@@ -79,10 +107,16 @@ services:
       CHROME_REMOTE_DEBUGGING_PORT: "9333"
       CHROME_PROFILE_DIR: /home/chrome/profile
     ports:
-      - "127.0.0.1:9333:9333"
+      - "127.0.0.1:19333:9333"
     volumes:
-      - ./data/chrome-profiles/cnnvd-report:/home/chrome/profile
+      - ./data/docker-chrome-profiles/cnnvd-report:/home/chrome/profile
     shm_size: "1gb"
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS http://127.0.0.1:$${CHROME_REMOTE_DEBUGGING_PORT}/json/version >/dev/null"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 10s
 
   browser-ncc:
     profiles:
@@ -93,10 +127,16 @@ services:
       CHROME_REMOTE_DEBUGGING_PORT: "9334"
       CHROME_PROFILE_DIR: /home/chrome/profile
     ports:
-      - "127.0.0.1:9334:9334"
+      - "127.0.0.1:19334:9334"
     volumes:
-      - ./data/chrome-profiles/ncc-report:/home/chrome/profile
+      - ./data/docker-chrome-profiles/ncc-report:/home/chrome/profile
     shm_size: "1gb"
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS http://127.0.0.1:$${CHROME_REMOTE_DEBUGGING_PORT}/json/version >/dev/null"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 10s
 
 volumes:
   opencode-config:

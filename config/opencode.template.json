@@ -6,7 +6,7 @@
       "command": ["/usr/local/bin/chrome-devtools-mcp"],
       "args": [
         "--browserUrl",
-        "http://${CHROME_DEVTOOLS_HOST}:${CHROME_DEVTOOLS_CNVD_PORT}",
+        "http://${CHROME_DEVTOOLS_CNVD_HOST}:${CHROME_DEVTOOLS_CNVD_PORT}",
         "--no-usage-statistics",
         "--no-performance-crux"
       ],
@@ -17,7 +17,7 @@
       "command": ["/usr/local/bin/chrome-devtools-mcp"],
       "args": [
         "--browserUrl",
-        "http://${CHROME_DEVTOOLS_HOST}:${CHROME_DEVTOOLS_CNNVD_PORT}",
+        "http://${CHROME_DEVTOOLS_CNNVD_HOST}:${CHROME_DEVTOOLS_CNNVD_PORT}",
         "--no-usage-statistics",
         "--no-performance-crux"
       ],
@@ -28,7 +28,7 @@
       "command": ["/usr/local/bin/chrome-devtools-mcp"],
       "args": [
         "--browserUrl",
-        "http://${CHROME_DEVTOOLS_HOST}:${CHROME_DEVTOOLS_NCC_PORT}",
+        "http://${CHROME_DEVTOOLS_NCC_HOST}:${CHROME_DEVTOOLS_NCC_PORT}",
         "--no-usage-statistics",
         "--no-performance-crux"
       ],

@@ -21,9 +21,9 @@ Client / Frontend
 - The fallback model is `deepseek-anthropic/deepseek-v4-pro`.
 - Model configuration is generated from `.env` at container startup.
 - `chrome-devtools-mcp@0.25.0` is installed inside the OpenCode runtime image.
-- Host Chrome DevTools ports are currently `9332`, `9333`, and `9334`.
-- On local macOS Docker Desktop, Chrome DevTools is reached from containers through `192.168.65.254`.
-- The current frontend is not implemented yet. API-first backend work is the active development path.
+- Docker Chrome DevTools services are `browser-cnvd:9332`, `browser-cnnvd:9333`, and `browser-ncc:9334`.
+- Host Chrome is now a fallback path only; the default local service path uses Docker Chrome through the `docker-browser` profile.
+- The minimal frontend runs as `frontend` on `127.0.0.1:4101` and calls `skills-api` only.
 
 ## Source Of Truth
 
@@ -34,6 +34,10 @@ Use these files as the source of truth before making changes:
 - `backend/server.js` for the job API.
 - `config/opencode.template.json` for OpenCode config rendering.
 - `opencode-server/start-opencode.sh` for environment-to-config generation.
+- `progress/整个项目的实现逻辑.md` for the current end-to-end implementation logic.
+- `progress/迁移前验收清单.md` for pre-server-migration acceptance gates.
+- `progress/迁移前验收报告.md` for the latest local acceptance results.
+- `progress/服务器迁移方案.md` for the server trial migration plan.
 - `progress/PROJECT_PROGRESS.md` for completed project milestones.
 - `progress/BACKEND_DEVELOPMENT_PLAN.md` for the current backend plan.
 
@@ -88,8 +92,9 @@ If a local macOS file or folder is needed, the backend or caller must copy/uploa
 - `skills-api` calls OpenCode through `OPENCODE_SERVER_URL`, currently `http://opencode-server:4096`.
 - Keep `opencode-server` based on the custom local image `opencode-skills-service-opencode:local`.
 - Do not rely on runtime `npx @latest` for MCP tools. Pin and install required tools in the image.
-- Keep Docker browser services behind the `docker-browser` profile until Docker Chrome is stable.
-- Local PoC may use host Chrome. Server deployment should prefer Docker Chrome.
+- Keep Docker browser services behind the `docker-browser` profile.
+- Local PoC and server deployment should prefer Docker Chrome. Host Chrome is only for temporary fallback debugging.
+- Mount skills through `SKILLS_HOST_DIR` to `/root/.agents/skills:ro`; do not hardcode macOS skills paths in Compose or docs.
 
 ## Model Rules
 
@@ -131,28 +136,37 @@ Important skills for this project:
 - `md2wechat`
 - `vulnerability-alert-processor`
 - `phase1-material-processor`
+- `msrc-vulnerability-report`
+- `cnvd-weekly-db-update`
 - `phase2-cnvd-report`
 - `phase2-cnnvd-report`
 - `phase2-ncc-report`
-- `msrc-vulnerability-report`
-- `cnvd-weekly-db-update`
 
 When making skills serviceable:
 
 - Replace hardcoded `/Users/yao/...` paths with container paths, relative paths, or environment variables.
 - Prefer `/root/.agents/skills/{skill_name}` inside containers.
+- Keep skills as an external synced asset. Do not vendor generated skill working data, profiles, secrets, or outputs into this repo.
 - Keep shared browser profiles separate per platform/task.
 - Validate one skill end to end before generalizing abstractions.
 - Start with `md2wechat` for service-level tests because it has clearer input/output behavior.
 
 ## Browser MCP Rules
 
-Current local browser endpoints:
+Current local browser endpoints exposed on the host:
 
 ```text
-http://192.168.65.254:9332
-http://192.168.65.254:9333
-http://192.168.65.254:9334
+http://127.0.0.1:19332
+http://127.0.0.1:19333
+http://127.0.0.1:19334
+```
+
+Current Docker browser endpoints from containers:
+
+```text
+http://browser-cnvd:9332
+http://browser-cnnvd:9333
+http://browser-ncc:9334
 ```
 
 Rules:
@@ -160,8 +174,10 @@ Rules:
 - Use `/usr/local/bin/chrome-devtools-mcp` in OpenCode config, not a bare command name.
 - Verify MCP with `GET http://127.0.0.1:4096/mcp`.
 - Verify Chrome DevTools with `/json/version`.
+- Docker Chrome runs Chromium on internal loopback port `9222` and exposes task ports through nginx, so keep the nginx Host rewrite if service names are used.
+- Browser startup may remove Chromium `Singleton*` profile locks because each Docker profile is single-writer per browser service.
 - Do not expose Chrome DevTools ports publicly on a server.
-- Server migration should replace macOS host Chrome with Docker Chrome or a controlled headless Chrome service.
+- Server migration should keep Docker Chrome or another controlled headless Chrome service.
 
 ## Frontend Direction
 
@@ -236,4 +252,3 @@ git status --short
 ```
 
 Confirm `.env`, Chrome profiles, and job output data are not staged.
-

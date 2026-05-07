@@ -9,6 +9,7 @@ RUN set -eux; \
     apt-get install -y --no-install-recommends \
     chromium \
     curl \
+    nginx \
     ca-certificates \
     fonts-wqy-microhei \
     fonts-wqy-zenhei \
