@@ -190,7 +190,7 @@ http://127.0.0.1:4096/app?directory=/data/work
 
 ```bash
 docker compose exec -T opencode-server sh -lc \
-  'cd /data/work && opencode run --model deepseek/deepseek-v4-flash "只回复 OK"'
+  'cd /data/work && opencode run --model deepseek-anthropic/deepseek-v4-flash "只回复 OK"'
 ```
 
 返回结果：

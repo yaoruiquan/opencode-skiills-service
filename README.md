@@ -18,7 +18,9 @@
 
 ```env
 OPENCODE_API_BASE_URL=https://api.deepseek.com/anthropic
+OPENCODE_PROVIDER_ID=deepseek-anthropic
 OPENCODE_MODEL=deepseek-v4-flash
+OPENCODE_MODEL_REASONING=false
 ```
 
 只需要编辑 `.env`，把 `OPENCODE_API_KEY` 改成你的 DeepSeek API key：
@@ -65,7 +67,7 @@ curl -X POST 'http://127.0.0.1:4096/session?directory=/data/work' \
 
 ```bash
 docker compose exec -T opencode-server sh -lc \
-  'cd /data/work && opencode run --model deepseek/deepseek-v4-flash "只回复 OK"'
+  'cd /data/work && opencode run --model deepseek-anthropic/deepseek-v4-flash "只回复 OK"'
 ```
 
 Web UI:
