@@ -1,0 +1,78 @@
+{
+  "$schema": "https://opencode.ai/config.json",
+  "mcp": {
+    "chrome-devtools-cnvd": {
+      "type": "local",
+      "command": ["/usr/local/bin/chrome-devtools-mcp"],
+      "args": [
+        "--browserUrl",
+        "http://${CHROME_DEVTOOLS_HOST}:${CHROME_DEVTOOLS_CNVD_PORT}",
+        "--no-usage-statistics",
+        "--no-performance-crux"
+      ],
+      "enabled": true
+    },
+    "chrome-devtools-cnnvd": {
+      "type": "local",
+      "command": ["/usr/local/bin/chrome-devtools-mcp"],
+      "args": [
+        "--browserUrl",
+        "http://${CHROME_DEVTOOLS_HOST}:${CHROME_DEVTOOLS_CNNVD_PORT}",
+        "--no-usage-statistics",
+        "--no-performance-crux"
+      ],
+      "enabled": true
+    },
+    "chrome-devtools-ncc": {
+      "type": "local",
+      "command": ["/usr/local/bin/chrome-devtools-mcp"],
+      "args": [
+        "--browserUrl",
+        "http://${CHROME_DEVTOOLS_HOST}:${CHROME_DEVTOOLS_NCC_PORT}",
+        "--no-usage-statistics",
+        "--no-performance-crux"
+      ],
+      "enabled": true
+    }
+  },
+  "permission": {
+    "bash": "allow",
+    "read": "allow",
+    "glob": "allow",
+    "grep": "allow",
+    "edit": "allow",
+    "skill": {
+      "md2wechat": "allow",
+      "phase1-material-processor": "allow",
+      "phase2-cnvd-report": "allow",
+      "phase2-cnnvd-report": "allow",
+      "phase2-ncc-report": "allow",
+      "vulnerability-alert-processor": "allow"
+    }
+  },
+  "provider": {
+    "${OPENCODE_PROVIDER_ID}": {
+      "name": "${OPENCODE_PROVIDER_NAME}",
+      "npm": "${OPENCODE_PROVIDER_NPM}",
+      "options": {
+        "apiKey": "${OPENCODE_API_KEY}",
+        "baseURL": "${OPENCODE_API_BASE_URL}"
+      },
+      "models": {
+        "${OPENCODE_MODEL}": {
+          "name": "${OPENCODE_MODEL_DISPLAY_NAME}",
+          "reasoning": ${OPENCODE_MODEL_REASONING},
+          "limit": {
+            "context": ${OPENCODE_MODEL_CONTEXT},
+            "output": ${OPENCODE_MODEL_OUTPUT}
+          }
+        }
+      }
+    }
+  },
+  "agent": {
+    "build": {
+      "model": "${OPENCODE_PROVIDER_ID}/${OPENCODE_MODEL}"
+    }
+  }
+}

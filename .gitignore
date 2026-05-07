@@ -1,0 +1,16 @@
+.env
+data/output/*
+data/work/*
+data/chrome-profiles/*
+!data/output/.gitkeep
+!data/work/.gitkeep
+!data/chrome-profiles/.gitkeep
+!data/chrome-profiles/cnvd-report/
+data/chrome-profiles/cnvd-report/*
+!data/chrome-profiles/cnvd-report/.gitkeep
+!data/chrome-profiles/cnnvd-report/
+data/chrome-profiles/cnnvd-report/*
+!data/chrome-profiles/cnnvd-report/.gitkeep
+!data/chrome-profiles/ncc-report/
+data/chrome-profiles/ncc-report/*
+!data/chrome-profiles/ncc-report/.gitkeep

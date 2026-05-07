@@ -1,0 +1,77 @@
+services:
+  opencode-server:
+    build:
+      context: ./opencode-server
+      args:
+        OPENCODE_IMAGE: ${OPENCODE_IMAGE:-ghcr.io/anomalyco/opencode:latest}
+    image: opencode-skills-service-opencode:local
+    container_name: opencode-skills-server
+    env_file:
+      - .env
+    ports:
+      - "127.0.0.1:4096:4096"
+    environment:
+      NODE_ENV: production
+    volumes:
+      - /Users/yao/.claude/skills:/root/.agents/skills:ro
+      - ./config/opencode.template.json:/opt/opencode/templates/opencode.template.json:ro
+      - opencode-config:/root/.config/opencode
+      - ../vulns:/data/input:ro
+      - ./data/work:/data/work
+      - ./data/output:/data/output
+      - opencode-state:/root/.local/share/opencode
+    entrypoint:
+      - /usr/local/bin/start-opencode.sh
+    command:
+      - serve
+      - --hostname
+      - 0.0.0.0
+      - --port
+      - "4096"
+      - --print-logs
+
+  browser-cnvd:
+    profiles:
+      - docker-browser
+    build: ./browser-service
+    container_name: opencode-browser-cnvd
+    environment:
+      CHROME_REMOTE_DEBUGGING_PORT: "9332"
+      CHROME_PROFILE_DIR: /home/chrome/profile
+    ports:
+      - "127.0.0.1:9332:9332"
+    volumes:
+      - ./data/chrome-profiles/cnvd-report:/home/chrome/profile
+    shm_size: "1gb"
+
+  browser-cnnvd:
+    profiles:
+      - docker-browser
+    build: ./browser-service
+    container_name: opencode-browser-cnnvd
+    environment:
+      CHROME_REMOTE_DEBUGGING_PORT: "9333"
+      CHROME_PROFILE_DIR: /home/chrome/profile
+    ports:
+      - "127.0.0.1:9333:9333"
+    volumes:
+      - ./data/chrome-profiles/cnnvd-report:/home/chrome/profile
+    shm_size: "1gb"
+
+  browser-ncc:
+    profiles:
+      - docker-browser
+    build: ./browser-service
+    container_name: opencode-browser-ncc
+    environment:
+      CHROME_REMOTE_DEBUGGING_PORT: "9334"
+      CHROME_PROFILE_DIR: /home/chrome/profile
+    ports:
+      - "127.0.0.1:9334:9334"
+    volumes:
+      - ./data/chrome-profiles/ncc-report:/home/chrome/profile
+    shm_size: "1gb"
+
+volumes:
+  opencode-config:
+  opencode-state:
