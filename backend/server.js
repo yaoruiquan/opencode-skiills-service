@@ -34,6 +34,7 @@ const TEMPLATES = {
     inputMode: "markdown",
     requiredInputs: ["article.md"],
     outputs: ["wechat-article.html", "wechat-cover.png"],
+    requiredOutputs: ["wechat-article.html", "wechat-cover.png"],
   },
   "vulnerability-alert-processor": {
     name: "vulnerability-alert-processor",
@@ -56,6 +57,7 @@ const TEMPLATES = {
     recommendedInputs: ["materials/DAS-T*/", "materials/**/*.docx"],
     modes: ["batch", "list", "single"],
     outputs: ["processed-materials/", "summary.txt"],
+    requiredOutputs: ["processed-materials/", "summary.txt"],
   },
   "msrc-vulnerability-report": {
     name: "msrc-vulnerability-report",
@@ -196,6 +198,20 @@ function safeJoin(root, relativePath) {
     throw new Error("path escapes job directory");
   }
   return target;
+}
+
+function decodePathSegments(segments) {
+  try {
+    return segments.map((segment) => decodeURIComponent(segment)).join("/");
+  } catch {
+    throw new Error("invalid encoded path");
+  }
+}
+
+function contentDispositionAttachment(filename) {
+  const safeName = filename.replaceAll('"', "").replaceAll("\\", "").replace(/[^\x20-\x7E]/g, "_");
+  const fallbackName = safeName && safeName !== "." && safeName !== ".." ? safeName : "download";
+  return `attachment; filename="${fallbackName}"; filename*=UTF-8''${encodeURIComponent(filename)}`;
 }
 
 function knownTemplate(value) {
@@ -446,7 +462,7 @@ function complexSkillPrompt(job, template, body, inputFiles) {
     "2. 所有脚本命令从 skill 目录执行，使用 python3。",
     "3. 不要使用或要求 macOS 绝对路径；所有服务输入只能来自本 job input 目录或任务备注中的 DAS-ID。",
     "4. 所有生成文件、状态文件、摘要和可下载产物必须复制或写入本 job output 目录。",
-    "5. 运行过程中的关键命令、平台编号、失败原因和人工介入事项写入 logs/summary.txt。",
+    "5. 运行过程中的关键命令、平台编号、失败原因和人工介入事项写入 output/summary.txt；临时脚本或调试文件写入 logs 目录，不要写入 /tmp。",
     "6. 最终回复必须列出输出文件、状态和下一步人工动作。",
   ];
 
@@ -462,10 +478,10 @@ function complexSkillPrompt(job, template, body, inputFiles) {
     "phase1-material-processor": [
       "模板要求：监管上报前材料整理。",
       "1. 输入材料应位于 input/materials；如果上传的是文件集合，先在 job 内整理出一个批次目录。",
-      "2. 按 skill 流程统计 DAS-T* 漏洞目录数量，必要时在 output 中创建重命名后的批次目录副本，不要修改 input 原件。",
-      "3. 使用 skill 脚本处理 CNVD/CNNVD docx 模版，执行 list/batch/single 对应模式。",
-      "4. 验证 docx 修改点，并把处理摘要写入 output/summary.txt。",
-      "5. 输出建议命名：output/processed-materials/、output/summary.txt。",
+      "2. 必须在 output/processed-materials 下创建重命名后的批次目录副本，不要直接把批次目录放在 output 根目录，不要修改 input 原件。",
+      "3. 必须处理 CNVD/CNNVD docx 模版，执行 list/batch/single 对应模式；如果 skill 脚本缺失，必须在 output/summary.txt 记录缺失并以失败结束，不要只复制文件后报告成功。",
+      "4. 必须验证 docx 修改点，并把处理摘要写入 output/summary.txt。",
+      "5. 必须输出：output/processed-materials/、output/summary.txt。",
     ],
     "msrc-vulnerability-report": [
       "模板要求：MSRC 安全更新漏洞预警报告生成。",
@@ -649,6 +665,16 @@ async function runJobAttempts(jobId, prompt, models, body) {
     await appendFile(latest.run.stderr, result.stderr);
 
     if (result.exitCode === 0) {
+      try {
+        await validateRequiredOutputs(latest, latest.run.template);
+      } catch (error) {
+        latest.status = "failed";
+        latest.run.finishedAt = now();
+        latest.run.error = error.message || String(error);
+        await appendFile(latest.run.stderr, `${latest.run.error}\n`);
+        await writeJob(latest);
+        return;
+      }
       latest.status = "succeeded";
       latest.run.finishedAt = now();
       await writeJob(latest);
@@ -752,6 +778,25 @@ async function listFiles(root) {
   return results;
 }
 
+async function validateRequiredOutputs(job, template) {
+  const definition = TEMPLATES[template] || {};
+  const requiredOutputs = definition.requiredOutputs || [];
+  const missing = [];
+
+  for (const relativePath of requiredOutputs) {
+    const expectsDirectory = relativePath.endsWith("/");
+    const target = safeJoin(job.paths.output, relativePath);
+    const stat = await fsp.stat(target).catch(() => null);
+    if (!stat || (expectsDirectory ? !stat.isDirectory() : !stat.isFile())) {
+      missing.push(`output/${relativePath}`);
+    }
+  }
+
+  if (missing.length) {
+    throw new Error(`template ${template} missing required outputs: ${missing.join(", ")}`);
+  }
+}
+
 async function route(req, res) {
   if (req.method === "OPTIONS") {
     res.writeHead(204, {
@@ -826,13 +871,13 @@ async function route(req, res) {
   }
 
   if (req.method === "GET" && parts.length >= 4 && parts[2] === "outputs") {
-    const relativePath = parts.slice(3).join("/");
+    const relativePath = decodePathSegments(parts.slice(3));
     const target = safeJoin(job.paths.output, relativePath);
     const data = await fsp.readFile(target);
     res.writeHead(200, {
       "Content-Type": "application/octet-stream",
       "Content-Length": data.length,
-      "Content-Disposition": `attachment; filename="${path.basename(target).replaceAll('"', "")}"`,
+      "Content-Disposition": contentDispositionAttachment(path.basename(target)),
       "Access-Control-Allow-Origin": "*",
     });
     res.end(data);
@@ -870,11 +915,14 @@ if (require.main === module) {
 module.exports = {
   TEMPLATES,
   complexSkillPrompt,
+  contentDispositionAttachment,
   createJob,
   defaultPrompt,
+  decodePathSegments,
   md2wechatPrompt,
   promptForRun,
   resolveCreateTemplate,
   resolveRunTemplate,
   safeRelativePath,
+  validateRequiredOutputs,
 };

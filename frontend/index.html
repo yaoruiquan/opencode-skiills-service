@@ -11,7 +11,8 @@
       <header class="topbar">
         <div>
           <p class="eyebrow">OpenCode Skills 服务</p>
-          <h1>任务控制台</h1>
+          <h1>自动化任务台</h1>
+          <p class="subtitle">按模板创建独立 job，上传输入，运行并下载输出。</p>
         </div>
         <div class="api-strip">
           <label for="apiBase">API 地址</label>
@@ -30,6 +31,8 @@
                 <option value="custom">自定义</option>
                 <option value="vulnerability-alert-processor">漏洞预警材料</option>
                 <option value="phase1-material-processor">材料整理</option>
+                <option value="msrc-vulnerability-report">MSRC 预警报告</option>
+                <option value="cnvd-weekly-db-update">CNVD 周库更新</option>
                 <option value="phase2-cnvd-report">CNVD 上报</option>
                 <option value="phase2-cnnvd-report">CNNVD 上报</option>
                 <option value="phase2-ncc-report">NCC 上报</option>
@@ -39,7 +42,7 @@
               任务标题
               <input id="title" type="text" value="公众号转换前端验证">
             </label>
-            <button id="createJob" type="button">创建任务</button>
+            <button id="createJob" type="button">新建任务</button>
           </div>
 
           <section class="template-card" aria-label="模板说明">
@@ -51,7 +54,7 @@
           </section>
 
           <div id="markdownPanel" class="input-row">
-            <label class="file-button" for="fileInput">上传 Markdown</label>
+            <label class="file-button" for="fileInput">选择 Markdown</label>
             <input id="fileInput" type="file" accept=".md,.markdown,text/markdown,text/plain">
             <button id="saveMarkdown" type="button">保存 article.md</button>
             <button id="runJob" type="button">运行任务</button>
@@ -64,7 +67,7 @@
               <label class="file-button" for="materialInput">追加文件</label>
               <input id="materialInput" type="file" multiple>
               <button id="saveMaterials" type="button">保存材料</button>
-              <button id="runMaterialJob" type="button">运行任务</button>
+              <button id="runMaterialJob" type="button">运行当前模板</button>
             </div>
             <div class="materials-options">
               <label>

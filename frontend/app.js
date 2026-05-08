@@ -1,5 +1,13 @@
+function defaultApiBase() {
+  const { protocol, hostname } = window.location;
+  if (!hostname || hostname === "localhost" || hostname === "127.0.0.1") {
+    return "http://127.0.0.1:4100";
+  }
+  return `${protocol}//${hostname}:4100`;
+}
+
 const state = {
-  apiBase: localStorage.getItem("skillsApiBase") || "http://127.0.0.1:4100",
+  apiBase: localStorage.getItem("skillsApiBase") || defaultApiBase(),
   currentJobId: localStorage.getItem("currentJobId") || "",
   jobs: [],
   currentJob: null,
@@ -100,7 +108,8 @@ async function request(path, options = {}) {
   const text = await response.text();
   const data = text ? JSON.parse(text) : {};
   if (!response.ok) {
-    throw new Error(data.message || data.error || `HTTP ${response.status}`);
+    const message = data.message && data.error ? `${data.error}: ${data.message}` : data.message || data.error;
+    throw new Error(message || `HTTP ${response.status}`);
   }
   return data;
 }
@@ -128,6 +137,18 @@ function setBusy(isBusy) {
 
 function templateValue() {
   return els.template.value || "md2wechat";
+}
+
+function jobTemplate(job) {
+  return job?.template || job?.type || "custom";
+}
+
+function canReuseJob(job, template) {
+  return job && jobTemplate(job) === template && !["running", "retrying"].includes(job.status);
+}
+
+function hasTaskBrief() {
+  return Boolean(els.taskBrief.value.trim());
 }
 
 function renderStatus() {
@@ -269,8 +290,10 @@ async function loadJobs() {
   const data = await request("/jobs");
   state.jobs = data.jobs || [];
   renderJobs();
-  if (!state.currentJobId && state.jobs[0]) {
-    state.currentJobId = state.jobs[0].id;
+  const selectedTemplate = templateValue();
+  const firstMatchingJob = state.jobs.find((job) => jobTemplate(job) === selectedTemplate);
+  if (!state.currentJobId && firstMatchingJob) {
+    state.currentJobId = firstMatchingJob.id;
     localStorage.setItem("currentJobId", state.currentJobId);
   }
 }
@@ -325,14 +348,18 @@ async function createJob() {
 }
 
 async function ensureJob() {
-  if (state.currentJobId) return state.currentJob || request(`/jobs/${state.currentJobId}`);
+  const selectedTemplate = templateValue();
+  if (state.currentJobId) {
+    const job = state.currentJob || await request(`/jobs/${state.currentJobId}`);
+    if (canReuseJob(job, selectedTemplate)) return job;
+  }
   return createJob();
 }
 
-async function saveMarkdown() {
-  const job = await ensureJob();
+async function saveMarkdown(job = null) {
+  const targetJob = job || await ensureJob();
   const content = els.markdown.value;
-  await request(`/jobs/${job.id}/files`, {
+  await request(`/jobs/${targetJob.id}/files`, {
     method: "POST",
     body: JSON.stringify({ filename: "article.md", content }),
   });
@@ -340,8 +367,8 @@ async function saveMarkdown() {
   toast("已保存 article.md");
 }
 
-async function saveMaterials() {
-  const job = await ensureJob();
+async function saveMaterials(job = null) {
+  const targetJob = job || await ensureJob();
   const files = selectedMaterialFiles();
   if (!files.length) {
     toast("未选择材料文件；将仅使用任务备注运行。");
@@ -350,7 +377,7 @@ async function saveMaterials() {
 
   for (const file of files) {
     const relative = materialRelativePath(file);
-    await request(`/jobs/${job.id}/files`, {
+    await request(`/jobs/${targetJob.id}/files`, {
       method: "POST",
       body: JSON.stringify({
         filename: relative,
@@ -363,17 +390,20 @@ async function saveMaterials() {
   toast(`已保存 ${files.length} 个材料文件`);
 }
 
-async function saveTemplateInputs() {
+async function saveTemplateInputs(job) {
   if (["custom", "md2wechat"].includes(templateValue())) {
-    await saveMarkdown();
+    await saveMarkdown(job);
     return;
   }
-  await saveMaterials();
+  if (!selectedMaterialFiles().length && !hasTaskBrief()) {
+    throw new Error("请先上传材料目录/文件，或填写任务备注。");
+  }
+  await saveMaterials(job);
 }
 
 async function runJob() {
   const job = await ensureJob();
-  await saveTemplateInputs();
+  await saveTemplateInputs(job);
   const template = templateValue();
   const body = template === "custom"
     ? { template, prompt: els.prompt.value.trim() || undefined }
@@ -397,6 +427,13 @@ function materialRelativePath(file) {
   const sourcePath = file.webkitRelativePath || file.name;
   const normalized = sourcePath.replaceAll("\\", "/").replace(/^\/+/, "");
   return normalized.startsWith("materials/") ? normalized : `materials/${normalized}`;
+}
+
+function isUsableMaterialFile(file) {
+  const relative = materialRelativePath(file);
+  return relative
+    .split("/")
+    .every((part) => part && !part.startsWith(".") && part !== "__MACOSX");
 }
 
 function fileToBase64(file) {
@@ -468,7 +505,17 @@ els.saveApi.addEventListener("click", () => {
 els.template.addEventListener("change", () => {
   const template = templateValue();
   els.title.value = `${displayTemplate(template)}任务`;
+  if (state.currentJob && jobTemplate(state.currentJob) !== template) {
+    state.currentJobId = "";
+    state.currentJob = null;
+    state.logs = { stdout: "", stderr: "" };
+    localStorage.removeItem("currentJobId");
+  }
   renderTemplateControls();
+  renderStatus();
+  renderOutputs();
+  renderLogs();
+  renderJobs();
 });
 els.createJob.addEventListener("click", () => guarded(createJob));
 els.saveMarkdown.addEventListener("click", () => guarded(saveMarkdown));
@@ -497,7 +544,7 @@ function selectedMaterialFiles() {
   return [
     ...Array.from(els.materialDirInput.files || []),
     ...Array.from(els.materialInput.files || []),
-  ];
+  ].filter(isUsableMaterialFile);
 }
 
 function renderSelectedMaterialFiles() {

@@ -1,5 +1,6 @@
 ARG OPENCODE_IMAGE=ghcr.io/anomalyco/opencode:latest
 FROM ${OPENCODE_IMAGE}
+ARG OPENCODE_VERSION=1.14.40
 
 USER root
 
@@ -46,6 +47,12 @@ RUN python3 -m pip install --break-system-packages --no-cache-dir python-dotenv 
     echo "Optional Python dependencies were not installed; install them later if skills need them."
 
 RUN npm config set registry https://registry.npmmirror.com && \
+    if ! command -v opencode >/dev/null 2>&1; then \
+      npm install -g opencode-ai@${OPENCODE_VERSION} \
+        --fetch-retries=5 \
+        --fetch-retry-mintimeout=20000 \
+        --fetch-retry-maxtimeout=120000; \
+    fi && \
     npm install -g chrome-devtools-mcp@0.25.0 \
       --fetch-retries=5 \
       --fetch-retry-mintimeout=20000 \

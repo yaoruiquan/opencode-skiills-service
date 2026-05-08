@@ -1,0 +1,43 @@
+services:
+  opencode-server:
+    ports: !override
+      - "127.0.0.1:4096:4096"
+    volumes:
+      - ${SKILLS_HOST_DIR:-/opt/opencode-skills/skills}:/root/.agents/skills:ro,Z
+      - ./config/opencode.template.json:/opt/opencode/templates/opencode.template.json:ro,Z
+      - opencode-config:/root/.config/opencode
+      - /var/lib/opencode-skills/work:/data/work:Z
+      - /var/lib/opencode-skills/output:/data/output:Z
+      - opencode-state:/root/.local/share/opencode
+
+  skills-api:
+    ports: !override
+      - "4100:4100"
+    volumes:
+      - ./backend:/app:ro,Z
+      - /var/lib/opencode-skills/work:/data/work:Z
+      - /var/lib/opencode-skills/output:/data/output:Z
+
+  frontend:
+    ports: !override
+      - "4101:4101"
+    volumes:
+      - ./frontend:/app:ro,Z
+
+  browser-cnvd:
+    ports: !override
+      - "127.0.0.1:19332:9332"
+    volumes:
+      - /var/lib/opencode-skills/docker-chrome-profiles/cnvd-report:/home/chrome/profile:Z
+
+  browser-cnnvd:
+    ports: !override
+      - "127.0.0.1:19333:9333"
+    volumes:
+      - /var/lib/opencode-skills/docker-chrome-profiles/cnnvd-report:/home/chrome/profile:Z
+
+  browser-ncc:
+    ports: !override
+      - "127.0.0.1:19334:9334"
+    volumes:
+      - /var/lib/opencode-skills/docker-chrome-profiles/ncc-report:/home/chrome/profile:Z

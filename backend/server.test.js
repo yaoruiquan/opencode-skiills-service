@@ -9,10 +9,13 @@ process.env.SKILLS_API_JOBS_ROOT = path.join(os.tmpdir(), `skills-api-test-${pro
 const {
   createJob,
   complexSkillPrompt,
+  contentDispositionAttachment,
   md2wechatPrompt,
   promptForRun,
+  decodePathSegments,
   resolveCreateTemplate,
   resolveRunTemplate,
+  validateRequiredOutputs,
 } = require("./server");
 
 test.after(async () => {
@@ -165,4 +168,40 @@ test("cnvd weekly template separates check and update modes", async () => {
   assert.match(prompt, /check 模式只检查 SSH 免密/);
   assert.match(prompt, /update 模式必须在任务备注明确授权后/);
   assert.match(prompt, /output\/update-result\.json/);
+});
+
+test("output download paths decode url encoded nested chinese filenames", () => {
+  const encoded = [
+    "processed-materials",
+    "%E6%9D%AD%E5%B7%9E%E5%AE%89%E6%81%92%E4%BF%A1%E6%81%AF%E5%8E%9F%E5%88%9B%E6%BC%8F%E6%B4%9E%E6%8A%A5%E9%80%811%E4%B8%AA-2026-03-30-161902",
+    "%E6%BC%8F%E6%B4%9E%E5%88%97%E8%A1%A8%E6%B1%87%E6%80%BB.xlsx",
+  ];
+
+  assert.equal(
+    decodePathSegments(encoded),
+    "processed-materials/杭州安恒信息原创漏洞报送1个-2026-03-30-161902/漏洞列表汇总.xlsx",
+  );
+  assert.throws(() => decodePathSegments(["%E0%A4%A"]), /invalid encoded path/);
+});
+
+test("output download header supports chinese filenames", () => {
+  const header = contentDispositionAttachment("漏洞列表汇总.xlsx");
+
+  assert.match(header, /attachment; filename="______\.xlsx"/);
+  assert.match(header, /filename\*=UTF-8''%E6%BC%8F%E6%B4%9E/);
+  assert.doesNotThrow(() => Buffer.from(header, "latin1"));
+});
+
+test("phase1 template validates required output contract", async () => {
+  const job = await createJob({ template: "phase1-material-processor" });
+
+  await assert.rejects(
+    () => validateRequiredOutputs(job, "phase1-material-processor"),
+    /missing required outputs: output\/processed-materials\/, output\/summary\.txt/,
+  );
+
+  await fs.mkdir(path.join(job.paths.output, "processed-materials"), { recursive: true });
+  await fs.writeFile(path.join(job.paths.output, "summary.txt"), "ok\n", "utf8");
+
+  await assert.doesNotReject(() => validateRequiredOutputs(job, "phase1-material-processor"));
 });

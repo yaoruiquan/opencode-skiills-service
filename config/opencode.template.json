@@ -43,6 +43,8 @@
     "edit": "allow",
     "skill": {
       "md2wechat": "allow",
+      "msrc-vulnerability-report": "allow",
+      "cnvd-weekly-db-update": "allow",
       "phase1-material-processor": "allow",
       "phase2-cnvd-report": "allow",
       "phase2-cnnvd-report": "allow",
