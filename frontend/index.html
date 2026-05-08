@@ -53,6 +53,21 @@
             <div id="templateMeta" class="template-meta"></div>
           </section>
 
+          <section id="configPanel" class="config-panel" aria-label="模板配置">
+            <div class="config-head">
+              <div>
+                <strong>模板配置</strong>
+                <p>前端表单会写入当前 job 的 input/service-config.json。</p>
+              </div>
+              <button id="resetConfig" type="button">恢复默认</button>
+            </div>
+            <div id="configForm" class="config-form"></div>
+            <details class="advanced-config">
+              <summary>高级 JSON</summary>
+              <textarea id="serviceConfig" spellcheck="false">{}</textarea>
+            </details>
+          </section>
+
           <div id="markdownPanel" class="input-row">
             <label class="file-button" for="fileInput">选择 Markdown</label>
             <input id="fileInput" type="file" accept=".md,.markdown,text/markdown,text/plain">
@@ -139,10 +154,14 @@
         <aside class="side" aria-label="任务列表和状态">
           <section class="status-panel">
             <div class="status-head">
-              <span id="statusDot" class="status-dot"></span>
-              <span id="statusLabel">未选择任务</span>
+              <div class="status-title">
+                <span id="statusDot" class="status-dot"></span>
+                <span id="statusLabel">未选择任务</span>
+              </div>
+              <button id="cancelJob" class="danger-button is-hidden" type="button">中断任务</button>
             </div>
             <dl id="jobMeta"></dl>
+            <div id="jobProgress" class="job-progress"></div>
           </section>
 
           <section class="jobs-panel">

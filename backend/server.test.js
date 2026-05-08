@@ -8,6 +8,7 @@ process.env.SKILLS_API_JOBS_ROOT = path.join(os.tmpdir(), `skills-api-test-${pro
 
 const {
   createJob,
+  cancelJob,
   complexSkillPrompt,
   contentDispositionAttachment,
   md2wechatPrompt,
@@ -15,7 +16,10 @@ const {
   decodePathSegments,
   resolveCreateTemplate,
   resolveRunTemplate,
+  serviceConfig,
   validateRequiredOutputs,
+  writeJob,
+  writeServiceConfig,
 } = require("./server");
 
 test.after(async () => {
@@ -94,6 +98,8 @@ test("complex templates require uploaded input files or a task brief", async () 
   assert.match(prompt, /phase2-cnvd-report skill/);
   assert.match(prompt, /chrome-devtools-cnvd/);
   assert.match(prompt, /9332/);
+  assert.match(prompt, /input\/service-config\.json/);
+  assert.match(prompt, /submit=false/);
   assert.match(prompt, /上报 DAS-T100001/);
   assert.match(prompt, new RegExp(job.paths.output.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
 });
@@ -114,6 +120,7 @@ test("complex templates include uploaded input files in the prompt", async () =>
 
   assert.match(prompt, /phase1-material-processor skill/);
   assert.match(prompt, /input\/materials\/DAS-T100001-demo\/report\.docx/);
+  assert.match(prompt, /scripts\/test_material\.py/);
   assert.match(prompt, /processed-materials/);
 });
 
@@ -165,8 +172,8 @@ test("cnvd weekly template separates check and update modes", async () => {
   );
 
   assert.match(prompt, /cnvd-weekly-db-update skill/);
-  assert.match(prompt, /check 模式只检查 SSH 免密/);
-  assert.match(prompt, /update 模式必须在任务备注明确授权后/);
+  assert.match(prompt, /check 模式只检查 input\/xml/);
+  assert.match(prompt, /update 模式必须同时满足 mode=update/);
   assert.match(prompt, /output\/update-result\.json/);
 });
 
@@ -204,4 +211,76 @@ test("phase1 template validates required output contract", async () => {
   await fs.writeFile(path.join(job.paths.output, "summary.txt"), "ok\n", "utf8");
 
   await assert.doesNotReject(() => validateRequiredOutputs(job, "phase1-material-processor"));
+});
+
+test("service config is written into job input and referenced by prompt", async () => {
+  const job = await createJob({ template: "phase2-cnnvd-report" });
+  const body = {
+    template: "phase2-cnnvd-report",
+    options: {
+      mode: "single",
+      taskBrief: "准备 DAS-T100001",
+      serviceConfig: {
+        das_id: "DAS-T100001",
+        submit: false,
+        entity_description: "测试实体描述",
+      },
+    },
+  };
+
+  const configPath = await writeServiceConfig(job, "phase2-cnnvd-report", body);
+  const raw = await fs.readFile(configPath, "utf8");
+  const data = JSON.parse(raw);
+
+  assert.equal(data.template, "phase2-cnnvd-report");
+  assert.equal(data.mode, "single");
+  assert.equal(data.serviceConfig.das_id, "DAS-T100001");
+  assert.equal(data.serviceConfig.submit, false);
+  assert.equal(serviceConfig(body).entity_description, "测试实体描述");
+});
+
+test("mode-specific required output contract is enforced", async () => {
+  const single = await createJob({ template: "phase2-cnvd-report" });
+  await fs.writeFile(path.join(single.paths.output, "summary.txt"), "ok\n", "utf8");
+  await assert.rejects(
+    () => validateRequiredOutputs(single, "phase2-cnvd-report", "single"),
+    /output\/form_context\.json/,
+  );
+  await fs.writeFile(path.join(single.paths.output, "form_context.json"), "{}\n", "utf8");
+  await assert.doesNotReject(() => validateRequiredOutputs(single, "phase2-cnvd-report", "single"));
+
+  const batch = await createJob({ template: "phase2-cnvd-report" });
+  await fs.writeFile(path.join(batch.paths.output, "summary.txt"), "ok\n", "utf8");
+  await assert.rejects(
+    () => validateRequiredOutputs(batch, "phase2-cnvd-report", "batch"),
+    /output\/batch-state\.json/,
+  );
+});
+
+test("running jobs can be canceled and record cancellation state", async () => {
+  const job = await createJob({ template: "custom" });
+  job.status = "running";
+  job.run = {
+    template: "custom",
+    options: {},
+    model: "test-model",
+    models: ["test-model"],
+    prompt: "sleep",
+    startedAt: new Date().toISOString(),
+    finishedAt: null,
+    exitCode: null,
+    stdout: path.join(job.paths.logs, "run.jsonl"),
+    stderr: path.join(job.paths.logs, "stderr.log"),
+    attempts: [],
+  };
+  await writeJob(job);
+  await fs.writeFile(job.run.stderr, "", "utf8");
+
+  const canceled = await cancelJob(job);
+  const stderr = await fs.readFile(job.run.stderr, "utf8");
+
+  assert.equal(canceled.status, "canceled");
+  assert.match(canceled.run.error, /canceled by user/);
+  assert.ok(canceled.run.canceledAt);
+  assert.match(stderr, /canceled by user/);
 });

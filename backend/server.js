@@ -18,6 +18,7 @@ const CAPACITY_RETRIES = Number(process.env.OPENCODE_CAPACITY_RETRIES || 1);
 const CAPACITY_RETRY_DELAY_MS = Number(process.env.OPENCODE_CAPACITY_RETRY_DELAY_MS || 5000);
 const MAX_BODY_BYTES = Number(process.env.SKILLS_API_MAX_BODY_MB || 50) * 1024 * 1024;
 const SKILL_ROOT = process.env.SKILLS_API_SKILL_ROOT || "/root/.agents/skills";
+const ACTIVE_RUNS = new Map();
 
 const TEMPLATES = {
   custom: {
@@ -46,6 +47,18 @@ const TEMPLATES = {
     recommendedInputs: ["task.md", "materials/", "vuln-data.json", "downloaded-template.docx"],
     modes: ["full", "report-only", "browser-template"],
     outputs: ["final.md", "final.docx", "final.pdf", "render_context.json"],
+    requiredOutputsByMode: {
+      full: ["summary.txt", "final.md", "final.docx", "render_context.json"],
+      "report-only": ["summary.txt", "final.md", "final.docx", "render_context.json"],
+      "browser-template": ["summary.txt"],
+    },
+    configSchema: {
+      cve: "",
+      advisory_url: "",
+      vuln_title: "",
+      wechat_draft: false,
+      publish: false,
+    },
   },
   "phase1-material-processor": {
     name: "phase1-material-processor",
@@ -58,6 +71,11 @@ const TEMPLATES = {
     modes: ["batch", "list", "single"],
     outputs: ["processed-materials/", "summary.txt"],
     requiredOutputs: ["processed-materials/", "summary.txt"],
+    configSchema: {
+      batch_dir: "",
+      das_id: "",
+      submitter: "",
+    },
   },
   "msrc-vulnerability-report": {
     name: "msrc-vulnerability-report",
@@ -69,6 +87,17 @@ const TEMPLATES = {
     recommendedInputs: ["materials/", "critical-descriptions.json", "logo.png"],
     modes: ["generate", "format-only", "publish"],
     outputs: ["report.md", "report.docx", "report.pdf", "preview.html", "summary.txt"],
+    requiredOutputsByMode: {
+      generate: ["summary.txt", "report.md", "report.docx"],
+      "format-only": ["summary.txt", "report.docx"],
+      publish: ["summary.txt", "report.md", "report.docx"],
+    },
+    configSchema: {
+      month: "",
+      require_critical_descriptions: true,
+      publish: false,
+      dingtalk_notify: false,
+    },
   },
   "cnvd-weekly-db-update": {
     name: "cnvd-weekly-db-update",
@@ -80,6 +109,14 @@ const TEMPLATES = {
     recommendedInputs: ["xml/", "task.md"],
     modes: ["check", "update"],
     outputs: ["summary.txt", "update-result.json"],
+    requiredOutputs: ["summary.txt", "update-result.json"],
+    configSchema: {
+      remote_host: "",
+      remote_user: "root",
+      docker_container: "crawlab",
+      dry_run: true,
+      dingtalk_notify: false,
+    },
   },
   "phase2-cnvd-report": {
     name: "phase2-cnvd-report",
@@ -93,6 +130,16 @@ const TEMPLATES = {
     browserMcp: "chrome-devtools-cnvd",
     chromePort: 9332,
     outputs: ["form_context.json", "submission-result.json", "batch-state.json"],
+    requiredOutputsByMode: {
+      single: ["summary.txt", "form_context.json"],
+      batch: ["summary.txt", "batch-state.json"],
+    },
+    configSchema: {
+      das_id: "",
+      target_path: "",
+      submit: false,
+      dingtalk_notify: false,
+    },
   },
   "phase2-cnnvd-report": {
     name: "phase2-cnnvd-report",
@@ -106,6 +153,19 @@ const TEMPLATES = {
     browserMcp: "chrome-devtools-cnnvd",
     chromePort: 9333,
     outputs: ["form_context.json", "submission-result.json", "batch-state.json"],
+    requiredOutputsByMode: {
+      single: ["summary.txt", "form_context.json"],
+      batch: ["summary.txt", "batch-state.json"],
+    },
+    configSchema: {
+      das_id: "",
+      target_path: "",
+      entity_description: "",
+      verification: "",
+      submit: false,
+      update_summary: false,
+      dingtalk_notify: false,
+    },
   },
   "phase2-ncc-report": {
     name: "phase2-ncc-report",
@@ -119,6 +179,16 @@ const TEMPLATES = {
     browserMcp: "chrome-devtools-ncc",
     chromePort: 9334,
     outputs: ["form_context.json", "submission-result.json"],
+    requiredOutputsByMode: {
+      single: ["summary.txt", "form_context.json"],
+    },
+    configSchema: {
+      das_id: "",
+      target_path: "",
+      prefer_source: "CNVD",
+      submit: false,
+      dingtalk_notify: false,
+    },
   },
 };
 
@@ -278,6 +348,14 @@ async function appendFile(file, data) {
   await fsp.appendFile(file, data).catch(() => {});
 }
 
+function isActiveStatus(status) {
+  return status === "running" || status === "retrying";
+}
+
+function isCanceled(job) {
+  return job.status === "canceled" || job.run?.canceledAt;
+}
+
 async function ensureJobDirs(paths) {
   await fsp.mkdir(paths.input, { recursive: true });
   await fsp.mkdir(paths.output, { recursive: true });
@@ -382,6 +460,45 @@ function runOptions(body) {
   return options;
 }
 
+function serviceConfig(body) {
+  const options = runOptions(body);
+  const raw = options.serviceConfig || options.config || {};
+  if (raw === undefined || raw === null || raw === "") return {};
+  if (typeof raw !== "object" || Array.isArray(raw)) {
+    throw new Error("options.serviceConfig must be an object");
+  }
+  return raw;
+}
+
+async function writeServiceConfig(job, template, body) {
+  const config = {
+    template,
+    mode: runMode(template, body),
+    taskBrief: taskBrief(body),
+    serviceConfig: serviceConfig(body),
+    paths: {
+      jobRoot: job.paths.root,
+      input: job.paths.input,
+      output: job.paths.output,
+      logs: job.paths.logs,
+      materials: path.join(job.paths.input, "materials"),
+    },
+    writtenAt: now(),
+  };
+  const target = safeJoin(job.paths.input, "service-config.json");
+  await fsp.mkdir(path.dirname(target), { recursive: true });
+  await fsp.writeFile(target, JSON.stringify(config, null, 2) + "\n", "utf8");
+  return target;
+}
+
+function runMode(template, body) {
+  const definition = TEMPLATES[template] || {};
+  const options = runOptions(body);
+  return typeof options.mode === "string" && options.mode.trim()
+    ? options.mode.trim()
+    : (definition.modes || ["single"])[0];
+}
+
 function taskBrief(body) {
   const options = runOptions(body);
   return typeof options.taskBrief === "string" ? options.taskBrief.trim() : "";
@@ -428,12 +545,11 @@ function md2wechatPrompt(job) {
 function complexSkillPrompt(job, template, body, inputFiles) {
   const definition = TEMPLATES[template];
   const options = runOptions(body);
-  const mode = typeof options.mode === "string" && options.mode.trim()
-    ? options.mode.trim()
-    : (definition.modes || ["single"])[0];
+  const mode = runMode(template, body);
   const brief = taskBrief(body) || "调用方未提供额外备注，请以 input 目录材料和 skill 固定流程为准。";
   const skillDir = path.join(SKILL_ROOT, definition.skill);
   const materialsDir = path.join(job.paths.input, "materials");
+  const configPath = path.join(job.paths.input, "service-config.json");
   const fileList = inputFiles.length
     ? inputFiles.map((file) => `- input/${file.path} (${file.size} bytes)`).join("\n")
     : "- 未上传文件；请只使用任务备注或 skill 配置中可解析的 DAS-ID/批次信息。";
@@ -448,6 +564,7 @@ function complexSkillPrompt(job, template, body, inputFiles) {
     `- 材料目录：${materialsDir}`,
     `- 输出目录：${job.paths.output}`,
     `- 日志目录：${job.paths.logs}`,
+    `- 服务化配置：${configPath}`,
     "",
     "调用参数：",
     `- 执行模式：${mode}`,
@@ -459,71 +576,80 @@ function complexSkillPrompt(job, template, body, inputFiles) {
     "",
     "通用执行规则：",
     "1. 执行前加载该 skill 的 SKILL.md 和其中要求的直接相关 references。",
-    "2. 所有脚本命令从 skill 目录执行，使用 python3。",
-    "3. 不要使用或要求 macOS 绝对路径；所有服务输入只能来自本 job input 目录或任务备注中的 DAS-ID。",
-    "4. 所有生成文件、状态文件、摘要和可下载产物必须复制或写入本 job output 目录。",
-    "5. 运行过程中的关键命令、平台编号、失败原因和人工介入事项写入 output/summary.txt；临时脚本或调试文件写入 logs 目录，不要写入 /tmp。",
-    "6. 最终回复必须列出输出文件、状态和下一步人工动作。",
+    "2. 必须先读取 input/service-config.json；前端配置、DAS-ID、目标路径、发布开关、远端参数均以该文件为准。",
+    "3. 所有脚本命令从 skill 目录执行，使用 python3；shell 脚本只在 skill 明确要求时运行。",
+    "4. 不要使用或要求 macOS 绝对路径、~/Downloads、/Users/yao/LLM/vulns、宿主机 Chrome profile；所有服务输入只能来自本 job input 目录、service-config.json 或任务备注中的 DAS-ID。",
+    "5. 所有生成文件、状态文件、摘要和可下载产物必须复制或写入本 job output 目录。",
+    "6. 运行过程中的关键命令、平台编号、失败原因和人工介入事项写入 output/summary.txt；临时脚本或调试文件写入 logs 目录，不要写入 /tmp。",
+    "7. 如果缺少必要输入、账号登录态、远端密钥或验证码，需要明确失败并写入 summary.txt，不要伪造成功。",
+    "8. 最终回复必须列出输出文件、状态和下一步人工动作。",
   ];
 
   const specifics = {
     "vulnerability-alert-processor": [
       "模板要求：漏洞预警材料生成。",
       "1. 按 skill 规则先读 references/runtime-rules.md；需要完整流程时读 workflow、field-mapping、auto-determine、output-spec 和 notes。",
-      "2. 如果 input 中已有 vuln-data JSON 和下载的 Word 模版，优先走阶段二报告生成：validate_vuln_data.py -> build_render_context.py -> render_markdown.py -> fill_word_template.py -> docx_to_pdf.py。",
-      "3. 如果只有任务备注、CVE、漏洞标题或公告链接，按 skill 信息检索流程生成可追溯 vuln-data JSON，再继续处理。",
-      "4. 如果需要浏览器阶段下载预警模版，使用已配置的 Chrome/MCP，不要直接跳过编辑保存和列表验证。",
-      "5. 输出建议命名：output/final.md、output/final.docx、output/final.pdf、output/render_context.json、output/summary.txt。",
+      "2. 如果 input 中已有 vuln-data JSON 和下载的 Word 模版，优先走确定性阶段二：validate_vuln_data.py -> build_render_context.py -> render_markdown.py -> fill_word_template.py -> docx_to_pdf.py。",
+      "3. 将 RenderContext 写为 output/render_context.json，Markdown 写为 output/final.md，Word 写为 output/final.docx，PDF 写为 output/final.pdf。",
+      "4. 如果只有任务备注、CVE、漏洞标题或公告链接，按 skill 信息检索流程生成可追溯 vuln-data JSON 后再继续处理，不能读取本机下载目录。",
+      "5. 如果 service-config.json 中 wechat_draft/publish 为 false，不上传公众号、不上传报告、不推送钉钉。",
+      "6. 必须输出：output/summary.txt；report-only/full 模式还必须输出 final.md、final.docx、render_context.json。",
     ],
     "phase1-material-processor": [
       "模板要求：监管上报前材料整理。",
       "1. 输入材料应位于 input/materials；如果上传的是文件集合，先在 job 内整理出一个批次目录。",
-      "2. 必须在 output/processed-materials 下创建重命名后的批次目录副本，不要直接把批次目录放在 output 根目录，不要修改 input 原件。",
-      "3. 必须处理 CNVD/CNNVD docx 模版，执行 list/batch/single 对应模式；如果 skill 脚本缺失，必须在 output/summary.txt 记录缺失并以失败结束，不要只复制文件后报告成功。",
-      "4. 必须验证 docx 修改点，并把处理摘要写入 output/summary.txt。",
-      "5. 必须输出：output/processed-materials/、output/summary.txt。",
+      `2. 必须运行 scripts/test_material.py 的服务化输出模式：python3 scripts/test_material.py --dir "<批次目录>" --output-root ${JSON.stringify(job.paths.output)} --summary ${JSON.stringify(path.join(job.paths.output, "summary.txt"))} --json ${JSON.stringify(path.join(job.paths.output, "material-result.json"))} ${mode === "single" ? "<DAS-ID>" : mode}`,
+      "3. 批次目录优先使用 service-config.json 的 serviceConfig.batch_dir；未配置时自动选择 input/materials 下第一个包含 DAS-* 子目录的目录。",
+      "4. 不要直接把批次目录放在 output 根目录，不要修改 input 原件。",
+      "5. 必须输出：output/processed-materials/、output/summary.txt、output/material-result.json。",
     ],
     "msrc-vulnerability-report": [
       "模板要求：MSRC 安全更新漏洞预警报告生成。",
       "1. 按 skill 规则先读 references/runtime-rules.md，再按场景读取 workflow.md 和 output-spec.md。",
       "2. 输入材料包必须来自 input/materials 或任务备注指定的 job 内相对路径，不要读取 ~/Downloads 或 macOS 绝对路径。",
       "3. 如果 input 中包含 critical-descriptions.json，先按 skill 规则保存并应用 CVSS>=9.0 漏洞描述。",
-      "4. generate 模式执行 msrc_main.py -> generate_word_dynamic.py -> format_word.py -> convert_docx_to_pdf.py。",
-      "5. publish 模式只有在 job 备注明确要求、且 skill .env 已在容器可用时才执行上传和钉钉通知；不要把 webhook、SSH 密码或服务器密钥写入 job 输出。",
-      "6. 输出建议命名：output/report.md、output/report.docx、output/report.pdf、output/preview.html、output/summary.txt。",
+      "4. generate 模式使用 job 内材料目录执行 msrc_main.py 生成 report.md，再执行 generate_word_dynamic.py、format_word.py，PDF 仅在 LibreOffice 可用时生成。",
+      "5. 最终产物复制或直接写入 output/report.md、output/report.docx、output/report.pdf、output/preview.html、output/summary.txt。",
+      "6. publish 模式只有在 service-config.json 中 publish=true 且 skill .env/服务器密钥可用时才执行上传和钉钉通知；不要把 webhook、SSH 密码或服务器密钥写入 job 输出。",
     ],
     "cnvd-weekly-db-update": [
       "模板要求：CNVD 每周 XML 数据库更新。",
       "1. 按 skill 规则读取 SKILL.md、README.md 和 references/troubleshooting.md。",
       "2. 服务化任务不得读取 ~/Downloads；XML 文件必须上传到 input/xml 或在任务备注中说明已存在的 job 内路径。",
-      "3. check 模式只检查 SSH 免密、Docker 目标环境和输入 XML，不执行真实更新。",
-      "4. update 模式必须在任务备注明确授权后才执行远端上传、Docker cp、parse.py、归档和钉钉通知。",
-      "5. SSH key、远端地址、钉钉 webhook 和密钥只能来自 skill 环境或服务器预配置，不要写入 job、日志或输出。",
+      "3. check 模式只检查 input/xml 是否存在 XML、远端参数是否配置、SSH 是否可连接，不执行真实更新。",
+      "4. update 模式必须同时满足 mode=update、service-config.json 中 dry_run=false 或 explicit_update=true，才执行远端上传、Docker cp、parse.py、归档和钉钉通知。",
+      "5. 远端 host/user/container 优先来自 service-config.json；SSH key、钉钉 webhook 和密钥只能来自服务器预配置，不要写入 job、日志或输出。",
       "6. 输出建议命名：output/summary.txt、output/update-result.json，并记录远端执行结果和人工后续动作。",
     ],
     "phase2-cnvd-report": [
       "模板要求：CNVD 平台上报。",
       "1. 使用 MCP 通道 chrome-devtools-cnvd，Chrome 调试端口 9332。",
-      "2. 单个模式先运行 scripts/prepare_form_context.py，批量模式先运行 scripts/batch_report.py init/start-next。",
-      "3. 浏览器填写阶段只读取 form_context.json、page_payloads 和 browser_helpers，不重新读取 Word 或临时判断字段。",
-      "4. 验证码按 skill 的 captcha-ocr 规则处理；如需人工输入，在 logs/summary.txt 明确记录。",
-      "5. 成功后记录 CNVD-ID；批量模式每条 record，全部完成后只 notify 一次。",
+      "2. 单个模式必须先运行 scripts/prepare_form_context.py <DAS目录或docx> --data-dir input/materials --output output/form_context.json；目标优先 serviceConfig.target_path/das_id。",
+      "3. 批量模式必须先运行 scripts/batch_report.py init <批次目录> --output output/batch-state.json --force，再 start-next，单条上下文仍写 output/form_context.json。",
+      "4. 浏览器填写阶段只读取 output/form_context.json、page_payloads 和 browser_helpers，不重新读取 Word 或临时判断字段。",
+      "5. service-config.json 中 submit=false 时只完成 form_context 准备和环境检查，不提交平台；submit=true 时才进入浏览器提交。",
+      "6. 验证码按 skill 的 captcha-ocr 规则处理；如需人工输入，在 output/summary.txt 明确记录。",
+      "7. 成功后记录 CNVD-ID；批量模式每条 record，全部完成后只 notify 一次。",
     ],
     "phase2-cnnvd-report": [
       "模板要求：CNNVD 平台上报。",
       "1. 使用 MCP 通道 chrome-devtools-cnnvd，Chrome 调试端口 9333。",
-      "2. 单个模式先运行 scripts/prepare_form_context.py，批量模式先运行 scripts/batch_report.py init/start-next。",
-      "3. 第 1 页下拉和所有文本字段只按 dropdown_plan 与 page_payloads 填写。",
-      "4. 上传 verification_video_path 和 poc_file_path 指向的材料，不重新压缩或临时查找文件。",
-      "5. 成功后记录 CNNVD-ID；需要维护汇总表时按 references/summary-table.md 执行。",
+      "2. 单个模式必须先运行 scripts/prepare_form_context.py <DAS目录或docx> --data-dir input/materials --output output/form_context.json；entity_description 和 verification 来自 service-config.json。",
+      "3. 批量模式必须先运行 scripts/batch_report.py init <批次目录> --output output/batch-state.json --force，再 start-next，单条上下文仍写 output/form_context.json。",
+      "4. 第 1 页下拉和所有文本字段只按 dropdown_plan 与 page_payloads 填写。",
+      "5. service-config.json 中 submit=false 时只完成 form_context 准备和环境检查，不提交平台；submit=true 时才进入浏览器提交。",
+      "6. 上传 verification_video_path 和 poc_file_path 指向的材料，不重新压缩或临时查找文件。",
+      "7. 成功后记录 CNNVD-ID；update_summary=true 时才按 references/summary-table.md 执行汇总表更新。",
     ],
     "phase2-ncc-report": [
       "模板要求：NCC 平台上报。",
       "1. 使用 MCP 通道 chrome-devtools-ncc，Chrome 调试端口 9334。",
-      "2. 先运行 scripts/prepare_form_context.py 生成 form_context.json，浏览器阶段只读这个文件。",
-      "3. 打开 NCC 企业中心并进入提交漏洞表单；如果出现拖拽拼图验证，记录为人工介入步骤。",
-      "4. 上传 form_context.json 中的 upload_zip_path，成功后记录 NCC 编号。",
-      "5. 输出建议命名：output/form_context.json、output/submission-result.json、output/summary.txt。",
+      "2. 必须先运行 scripts/prepare_form_context.py --data-dir input/materials --output output/form_context.json；DAS-ID、target_path、prefer_source 优先来自 service-config.json。",
+      "3. 浏览器阶段只读 output/form_context.json，不重新读取 Word 或临时判断字段。",
+      "4. service-config.json 中 submit=false 时只完成 form_context 准备和环境检查，不提交平台；submit=true 时才打开 NCC 企业中心并提交。",
+      "5. 如果出现拖拽拼图验证，记录为人工介入步骤。",
+      "6. 上传 form_context.json 中的 upload_zip_path，成功后记录 NCC 编号。",
+      "7. 输出建议命名：output/form_context.json、output/submission-result.json、output/summary.txt。",
     ],
   };
 
@@ -540,6 +666,7 @@ async function promptForRun(job, body, template) {
   }
 
   await ensureTemplateRunRequirements(job, template, body);
+  await writeServiceConfig(job, template, body);
 
   if (template === "md2wechat") {
     return md2wechatPrompt(job);
@@ -553,7 +680,7 @@ async function promptForRun(job, body, template) {
 }
 
 async function runJob(job, body) {
-  if (job.status === "running") {
+  if (isActiveStatus(job.status)) {
     throw new Error("job is already running");
   }
 
@@ -591,11 +718,45 @@ async function runJob(job, body) {
 
   runJobAttempts(job.id, prompt, modelCandidates, body).catch(async (error) => {
     const latest = await readJob(job.id);
+    if (isCanceled(latest)) {
+      return;
+    }
     latest.status = "failed";
     latest.run.finishedAt = now();
     latest.run.error = error.message || String(error);
     await writeJob(latest);
   });
+
+  return job;
+}
+
+async function cancelJob(job) {
+  if (!isActiveStatus(job.status)) {
+    throw new Error("job is not running");
+  }
+
+  const active = ACTIVE_RUNS.get(job.id);
+  const canceledAt = now();
+  job.status = "canceled";
+  if (job.run) {
+    job.run.finishedAt = canceledAt;
+    job.run.canceledAt = canceledAt;
+    job.run.error = "canceled by user";
+  }
+  await appendFile(path.join(job.paths.logs, "stderr.log"), `canceled by user at ${canceledAt}\n`);
+  await writeJob(job);
+
+  if (active?.child && !active.child.killed) {
+    active.child.kill("SIGTERM");
+    const killTimer = setTimeout(() => {
+      if (active.child.exitCode === null && active.child.signalCode === null) {
+        active.child.kill("SIGKILL");
+      }
+    }, 5000);
+    killTimer.unref?.();
+  } else {
+    ACTIVE_RUNS.delete(job.id);
+  }
 
   return job;
 }
@@ -624,6 +785,9 @@ async function runJobAttempts(jobId, prompt, models, body) {
     const model = plan[index];
     const attemptNumber = index + 1;
     const job = await readJob(jobId);
+    if (isCanceled(job)) {
+      return;
+    }
     const attempt = {
       number: attemptNumber,
       model,
@@ -641,6 +805,10 @@ async function runJobAttempts(jobId, prompt, models, body) {
 
     if (attemptNumber > 1) {
       await sleep(CAPACITY_RETRY_DELAY_MS);
+      const afterDelay = await readJob(jobId);
+      if (isCanceled(afterDelay)) {
+        return;
+      }
     }
 
     await fsp.writeFile(attempt.stdout, "", "utf8");
@@ -653,6 +821,9 @@ async function runJobAttempts(jobId, prompt, models, body) {
     lastCapacityError = isCapacityError(combinedOutput);
 
     const latest = await readJob(jobId);
+    if (isCanceled(latest)) {
+      return;
+    }
     const latestAttempt = latest.run.attempts.find((item) => item.number === attemptNumber);
     if (latestAttempt) {
       latestAttempt.finishedAt = now();
@@ -666,7 +837,7 @@ async function runJobAttempts(jobId, prompt, models, body) {
 
     if (result.exitCode === 0) {
       try {
-        await validateRequiredOutputs(latest, latest.run.template);
+        await validateRequiredOutputs(latest, latest.run.template, latest.run.options?.mode || "");
       } catch (error) {
         latest.status = "failed";
         latest.run.finishedAt = now();
@@ -705,29 +876,30 @@ async function runJobAttempts(jobId, prompt, models, body) {
 
 function runOpenCodeAttempt(job, prompt, model, body, stdoutPath, stderrPath) {
   return new Promise((resolve) => {
-  const args = [
-    "run",
-    "--attach",
-    OPENCODE_SERVER_URL,
-    "--dir",
-    job.paths.root,
-    "--model",
-    model,
-    "--format",
-    "json",
-  ];
+    const args = [
+      "run",
+      "--attach",
+      OPENCODE_SERVER_URL,
+      "--dir",
+      job.paths.root,
+      "--model",
+      model,
+      "--format",
+      "json",
+    ];
 
-  if (body.dangerouslySkipPermissions === true) {
-    args.push("--dangerously-skip-permissions");
-  }
+    if (body.dangerouslySkipPermissions === true) {
+      args.push("--dangerously-skip-permissions");
+    }
 
-  args.push(prompt);
+    args.push(prompt);
 
-  const child = spawn("opencode", args, {
-    cwd: job.paths.root,
-    env: process.env,
-    stdio: ["ignore", "pipe", "pipe"],
-  });
+    const child = spawn("opencode", args, {
+      cwd: job.paths.root,
+      env: process.env,
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+    ACTIVE_RUNS.set(job.id, { child, startedAt: now() });
 
     let stdout = "";
     let stderr = "";
@@ -743,10 +915,18 @@ function runOpenCodeAttempt(job, prompt, model, body, stdoutPath, stderrPath) {
 
     child.on("error", (error) => {
       stderr += error.message;
+      const active = ACTIVE_RUNS.get(job.id);
+      if (active?.child === child) {
+        ACTIVE_RUNS.delete(job.id);
+      }
       resolve({ exitCode: 1, stdout, stderr });
     });
 
     child.on("close", (code) => {
+      const active = ACTIVE_RUNS.get(job.id);
+      if (active?.child === child) {
+        ACTIVE_RUNS.delete(job.id);
+      }
       resolve({ exitCode: code, stdout, stderr });
     });
   });
@@ -778,9 +958,16 @@ async function listFiles(root) {
   return results;
 }
 
-async function validateRequiredOutputs(job, template) {
+function requiredOutputsFor(template, mode) {
   const definition = TEMPLATES[template] || {};
-  const requiredOutputs = definition.requiredOutputs || [];
+  if (definition.requiredOutputsByMode) {
+    return definition.requiredOutputsByMode[mode] || definition.requiredOutputsByMode.default || [];
+  }
+  return definition.requiredOutputs || [];
+}
+
+async function validateRequiredOutputs(job, template, mode = "") {
+  const requiredOutputs = requiredOutputsFor(template, mode);
   const missing = [];
 
   for (const relativePath of requiredOutputs) {
@@ -860,6 +1047,11 @@ async function route(req, res) {
     return;
   }
 
+  if (req.method === "POST" && parts.length === 3 && parts[2] === "cancel") {
+    json(res, 202, await cancelJob(job));
+    return;
+  }
+
   if (req.method === "GET" && parts.length === 3 && parts[2] === "logs") {
     json(res, 200, await readLogs(job));
     return;
@@ -891,6 +1083,7 @@ const server = http.createServer((req, res) => {
   route(req, res).catch((error) => {
     if (
       error.message === "invalid job id" ||
+      error.message === "job is not running" ||
       error.message.includes("required") ||
       error.message.includes("requires") ||
       error.message.includes("invalid")
@@ -923,6 +1116,10 @@ module.exports = {
   promptForRun,
   resolveCreateTemplate,
   resolveRunTemplate,
+  serviceConfig,
   safeRelativePath,
+  cancelJob,
   validateRequiredOutputs,
+  writeJob,
+  writeServiceConfig,
 };

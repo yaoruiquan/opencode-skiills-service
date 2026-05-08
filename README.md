@@ -68,6 +68,7 @@ docker compose --profile docker-browser up -d --build
 | GET | `/jobs` | 任务列表 |
 | POST | `/jobs/{id}/files` | 上传输入文件 |
 | POST | `/jobs/{id}/run` | 执行（异步） |
+| POST | `/jobs/{id}/cancel` | 中断运行中任务 |
 | GET | `/jobs/{id}` | 任务状态 |
 | GET | `/jobs/{id}/logs` | 运行日志 |
 | GET | `/jobs/{id}/outputs` | 输出文件列表 |
@@ -106,6 +107,25 @@ curl http://127.0.0.1:4100/jobs/job_xxx/outputs
 | `phase2-cnvd-report` | phase2-cnvd-report | :9332 | CNVD 漏洞上报 |
 | `phase2-cnnvd-report` | phase2-cnnvd-report | :9333 | CNNVD 漏洞上报 |
 | `phase2-ncc-report` | phase2-ncc-report | :9334 | NCC 漏洞上报 |
+
+复杂模板支持通过前端“模板配置”填写 JSON。运行时后端会把配置写入当前任务的：
+
+```text
+input/service-config.json
+```
+
+skill 执行时只允许读取当前 job 的 `input/`、`output/`、`logs/` 和这份配置文件，不再依赖 macOS 绝对路径。常用配置包括：
+
+| 模板 | 关键配置 |
+|------|----------|
+| `phase1-material-processor` | `batch_dir`、`das_id`、`submitter` |
+| `phase2-cnvd-report` | `das_id`、`target_path`、`submit` |
+| `phase2-cnnvd-report` | `das_id`、`target_path`、`entity_description`、`verification`、`submit` |
+| `phase2-ncc-report` | `das_id`、`target_path`、`prefer_source`、`submit` |
+| `msrc-vulnerability-report` | `month`、`publish`、`dingtalk_notify` |
+| `cnvd-weekly-db-update` | `remote_host`、`remote_user`、`docker_container`、`dry_run` |
+
+`submit`、`publish`、`dingtalk_notify` 默认关闭；只有明确设为 `true` 且服务器已有登录态/密钥时，才执行平台提交、发布或通知。
 
 ## Docker Chrome
 

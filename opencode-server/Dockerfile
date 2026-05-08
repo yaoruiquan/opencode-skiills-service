@@ -42,8 +42,24 @@ RUN set -eux; \
     exit 1; \
   fi
 
-RUN python3 -m pip install --break-system-packages --no-cache-dir python-dotenv || \
-    python3 -m pip install --no-cache-dir python-dotenv || \
+RUN python3 -m pip install --break-system-packages --no-cache-dir \
+      beautifulsoup4 \
+      chardet \
+      markdown \
+      openpyxl \
+      pillow \
+      python-docx \
+      python-dotenv \
+      requests || \
+    python3 -m pip install --no-cache-dir \
+      beautifulsoup4 \
+      chardet \
+      markdown \
+      openpyxl \
+      pillow \
+      python-docx \
+      python-dotenv \
+      requests || \
     echo "Optional Python dependencies were not installed; install them later if skills need them."
 
 RUN npm config set registry https://registry.npmmirror.com && \

@@ -174,6 +174,7 @@ h2 {
 
 .toolbar,
 .template-card,
+.config-panel,
 .materials-options,
 .status-panel,
 .jobs-panel,
@@ -218,6 +219,109 @@ h2 {
   color: var(--muted);
   font-size: 13px;
   line-height: 1.55;
+}
+
+.config-panel {
+  display: grid;
+  gap: 12px;
+  padding: 14px;
+  box-shadow: none;
+}
+
+.config-panel.is-hidden {
+  display: none;
+}
+
+.config-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+}
+
+.config-head strong {
+  display: block;
+  font-size: 16px;
+}
+
+.config-head p {
+  margin: 4px 0 0;
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.config-head button {
+  min-height: 32px;
+  border-color: var(--line-strong);
+  background: var(--surface-strong);
+  color: var(--ink);
+}
+
+.config-form {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.config-field {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(180px, 0.8fr);
+  gap: 10px;
+  align-items: center;
+  min-height: 64px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--surface-strong);
+  padding: 10px;
+}
+
+.config-field strong {
+  display: block;
+  color: var(--ink);
+  font-size: 13px;
+}
+
+.config-field small {
+  display: block;
+  margin-top: 3px;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 600;
+  line-height: 1.4;
+}
+
+.config-toggle {
+  grid-template-columns: minmax(0, 1fr) 48px;
+}
+
+.config-toggle input {
+  width: 44px;
+  min-height: 24px;
+  accent-color: var(--accent);
+}
+
+.config-toggle.is-danger {
+  border-color: #e0b8b4;
+  background: #fff8f7;
+}
+
+.advanced-config {
+  border-top: 1px solid var(--line);
+  padding-top: 10px;
+}
+
+.advanced-config summary {
+  color: var(--muted);
+  cursor: pointer;
+  font-size: 13px;
+  font-weight: 900;
+}
+
+#serviceConfig {
+  min-height: 132px;
+  margin-top: 10px;
+  font-family: "SFMono-Regular", "Menlo", "Consolas", monospace;
+  font-size: 12px;
 }
 
 .meta-pill {
@@ -306,6 +410,11 @@ h2 {
   white-space: pre-wrap;
 }
 
+.empty.compact {
+  padding: 10px 12px;
+  font-size: 12px;
+}
+
 #markdown,
 #prompt {
   font-family: "SFMono-Regular", "Menlo", "Consolas", monospace;
@@ -350,11 +459,32 @@ h2 {
 }
 
 .status-head {
-  justify-content: flex-start;
+  justify-content: space-between;
   padding-bottom: 12px;
   border-bottom: 1px solid var(--line);
   font-size: 18px;
   font-weight: 900;
+}
+
+.status-title {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.danger-button {
+  min-height: 32px;
+  border-color: var(--danger);
+  background: var(--danger);
+}
+
+.danger-button:hover {
+  border-color: #8e2d27;
+  background: #8e2d27;
+}
+
+.danger-button.is-hidden {
+  display: none;
 }
 
 .status-dot {
@@ -382,6 +512,10 @@ h2 {
   background: var(--danger);
 }
 
+.status-dot.canceled {
+  background: #6b7280;
+}
+
 dl {
   display: grid;
   grid-template-columns: 82px minmax(0, 1fr);
@@ -399,6 +533,93 @@ dd {
   min-width: 0;
   margin: 0;
   overflow-wrap: anywhere;
+}
+
+.job-progress {
+  margin-top: 14px;
+  border-top: 1px solid var(--line);
+  padding-top: 14px;
+}
+
+.progress-head {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 900;
+}
+
+.progress-bar {
+  height: 10px;
+  margin-top: 8px;
+  overflow: hidden;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: var(--surface-strong);
+}
+
+.progress-bar span {
+  display: block;
+  height: 100%;
+  border-radius: inherit;
+  background: var(--accent);
+  transition: width 180ms ease;
+}
+
+.progress-bar span.is-failed {
+  background: var(--danger);
+}
+
+.progress-bar span.is-canceled {
+  background: #6b7280;
+}
+
+.progress-steps {
+  display: grid;
+  gap: 7px;
+  margin: 12px 0 0;
+  padding: 0;
+  list-style: none;
+}
+
+.progress-steps li {
+  position: relative;
+  padding-left: 18px;
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.35;
+}
+
+.progress-steps li::before {
+  content: "";
+  position: absolute;
+  left: 0;
+  top: 4px;
+  width: 8px;
+  height: 8px;
+  border: 1px solid var(--line-strong);
+  border-radius: 50%;
+  background: var(--surface-strong);
+}
+
+.progress-steps li.is-done {
+  color: var(--ink);
+}
+
+.progress-steps li.is-done::before {
+  border-color: var(--ok);
+  background: var(--ok);
+}
+
+.progress-steps li.is-active::before {
+  border-color: var(--accent);
+  background: var(--accent);
+}
+
+.progress-steps li.is-failed::before {
+  border-color: var(--danger);
+  background: var(--danger);
 }
 
 .jobs-panel {
@@ -481,8 +702,29 @@ dd {
 
 .outputs {
   display: grid;
-  gap: 8px;
+  gap: 12px;
   padding: 14px;
+}
+
+.output-group {
+  display: grid;
+  gap: 8px;
+}
+
+.output-group-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  min-height: 30px;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 900;
+}
+
+.output-group-head strong {
+  color: var(--ink);
+  font-size: 14px;
 }
 
 .output-link {
@@ -563,14 +805,16 @@ dd {
 @media (max-width: 1080px) {
   .topbar,
   .workspace,
-  .template-card {
+  .template-card,
+  .config-form {
     grid-template-columns: 1fr;
   }
 
   .toolbar,
   .input-row,
   .api-strip,
-  .materials-options {
+  .materials-options,
+  .config-field {
     grid-template-columns: 1fr;
   }
 
