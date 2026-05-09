@@ -5,6 +5,7 @@ PORT="${CHROME_REMOTE_DEBUGGING_PORT:-9332}"
 INTERNAL_PORT="${CHROME_INTERNAL_DEBUGGING_PORT:-9222}"
 PROFILE_DIR="${CHROME_PROFILE_DIR:-/home/chrome/profile}"
 BOOTSTRAP_URL="${CHROME_BOOTSTRAP_URL:-about:blank}"
+EXTERNAL_HOSTNAME="${CHROME_EXTERNAL_HOSTNAME:-localhost}"
 
 mkdir -p "${PROFILE_DIR}"
 chmod 700 "${PROFILE_DIR}"
@@ -52,6 +53,9 @@ http {
       proxy_set_header Host 127.0.0.1:${INTERNAL_PORT};
       proxy_set_header Upgrade \$http_upgrade;
       proxy_set_header Connection \$connection_upgrade;
+      sub_filter 'ws://127.0.0.1:${INTERNAL_PORT}' 'ws://${EXTERNAL_HOSTNAME}:${PORT}';
+      sub_filter_once off;
+      sub_filter_types application/json;
     }
   }
 }

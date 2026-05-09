@@ -1,4 +1,5 @@
 .env
+.omc/
 data/output/*
 data/work/*
 data/chrome-profiles/*

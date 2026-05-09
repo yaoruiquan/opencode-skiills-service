@@ -3,8 +3,8 @@
   "mcp": {
     "chrome-devtools-cnvd": {
       "type": "local",
-      "command": ["/usr/local/bin/chrome-devtools-mcp"],
-      "args": [
+      "command": [
+        "/usr/local/bin/chrome-devtools-mcp",
         "--browserUrl",
         "http://${CHROME_DEVTOOLS_CNVD_HOST}:${CHROME_DEVTOOLS_CNVD_PORT}",
         "--no-usage-statistics",
@@ -14,8 +14,8 @@
     },
     "chrome-devtools-cnnvd": {
       "type": "local",
-      "command": ["/usr/local/bin/chrome-devtools-mcp"],
-      "args": [
+      "command": [
+        "/usr/local/bin/chrome-devtools-mcp",
         "--browserUrl",
         "http://${CHROME_DEVTOOLS_CNNVD_HOST}:${CHROME_DEVTOOLS_CNNVD_PORT}",
         "--no-usage-statistics",
@@ -25,8 +25,8 @@
     },
     "chrome-devtools-ncc": {
       "type": "local",
-      "command": ["/usr/local/bin/chrome-devtools-mcp"],
-      "args": [
+      "command": [
+        "/usr/local/bin/chrome-devtools-mcp",
         "--browserUrl",
         "http://${CHROME_DEVTOOLS_NCC_HOST}:${CHROME_DEVTOOLS_NCC_PORT}",
         "--no-usage-statistics",
@@ -41,6 +41,7 @@
     "glob": "allow",
     "grep": "allow",
     "edit": "allow",
+    "external_directory": "allow",
     "skill": {
       "md2wechat": "allow",
       "msrc-vulnerability-report": "allow",

@@ -49,13 +49,21 @@ services:
       NODE_ENV: production
       SKILLS_API_PORT: "4100"
       SKILLS_API_JOBS_ROOT: /data/work/jobs
+      SKILLS_API_SKILL_ROOT: /root/.agents/skills
       OPENCODE_SERVER_URL: http://opencode-server:4096
       OPENCODE_RUN_MODEL: ${OPENCODE_PROVIDER_ID:-deepseek-anthropic}/${OPENCODE_MODEL:-deepseek-v4-flash}
       OPENCODE_FALLBACK_MODELS: ${OPENCODE_FALLBACK_MODELS:-deepseek-anthropic/deepseek-v4-pro}
       OPENCODE_CAPACITY_RETRIES: ${OPENCODE_CAPACITY_RETRIES:-1}
       OPENCODE_CAPACITY_RETRY_DELAY_MS: ${OPENCODE_CAPACITY_RETRY_DELAY_MS:-5000}
+      CHROME_DEVTOOLS_CNVD_HOST: ${CHROME_DEVTOOLS_CNVD_HOST:-browser-cnvd}
+      CHROME_DEVTOOLS_CNNVD_HOST: ${CHROME_DEVTOOLS_CNNVD_HOST:-browser-cnnvd}
+      CHROME_DEVTOOLS_NCC_HOST: ${CHROME_DEVTOOLS_NCC_HOST:-browser-ncc}
+      CHROME_DEVTOOLS_CNVD_PORT: ${CHROME_DEVTOOLS_CNVD_PORT:-9332}
+      CHROME_DEVTOOLS_CNNVD_PORT: ${CHROME_DEVTOOLS_CNNVD_PORT:-9333}
+      CHROME_DEVTOOLS_NCC_PORT: ${CHROME_DEVTOOLS_NCC_PORT:-9334}
     volumes:
       - ./backend:/app:ro
+      - ${SKILLS_HOST_DIR:-/Users/yao/.claude/skills}:/root/.agents/skills:ro
       - ./data/work:/data/work
       - ./data/output:/data/output
     entrypoint:
@@ -86,6 +94,7 @@ services:
     environment:
       CHROME_REMOTE_DEBUGGING_PORT: "9332"
       CHROME_PROFILE_DIR: /home/chrome/profile
+      CHROME_EXTERNAL_HOSTNAME: "browser-cnvd"
     ports:
       - "127.0.0.1:19332:9332"
     volumes:
@@ -106,6 +115,7 @@ services:
     environment:
       CHROME_REMOTE_DEBUGGING_PORT: "9333"
       CHROME_PROFILE_DIR: /home/chrome/profile
+      CHROME_EXTERNAL_HOSTNAME: "browser-cnnvd"
     ports:
       - "127.0.0.1:19333:9333"
     volumes:
@@ -126,6 +136,7 @@ services:
     environment:
       CHROME_REMOTE_DEBUGGING_PORT: "9334"
       CHROME_PROFILE_DIR: /home/chrome/profile
+      CHROME_EXTERNAL_HOSTNAME: "browser-ncc"
     ports:
       - "127.0.0.1:19334:9334"
     volumes:

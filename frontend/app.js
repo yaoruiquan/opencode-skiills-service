@@ -13,6 +13,9 @@ const state = {
   currentJob: null,
   templates: {},
   logs: { stdout: "", stderr: "" },
+  events: [],
+  humanActions: [],
+  humanInput: null,
   activeLog: "stdout",
   pollTimer: null,
 };
@@ -52,6 +55,8 @@ const els = {
   jobProgress: document.querySelector("#jobProgress"),
   refreshJobs: document.querySelector("#refreshJobs"),
   refreshCurrent: document.querySelector("#refreshCurrent"),
+  filterTemplate: document.querySelector("#filterTemplate"),
+  filterStatus: document.querySelector("#filterStatus"),
   jobsList: document.querySelector("#jobsList"),
   outputs: document.querySelector("#outputs"),
   logs: document.querySelector("#logs"),
@@ -354,6 +359,9 @@ function renderStatus() {
 
   if (!job) {
     els.jobMeta.innerHTML = "";
+    state.events = [];
+    state.humanActions = [];
+    state.humanInput = null;
     els.jobProgress.innerHTML = '<div class="empty compact">未选择任务。</div>';
     return;
   }
@@ -366,36 +374,50 @@ function renderStatus() {
     ["更新时间", job.updatedAt || "-"],
     ["开始时间", job.run?.startedAt || "-"],
     ["结束时间", job.run?.finishedAt || "-"],
-    ["模型", job.run?.model || "-"],
+    ["执行方式", job.run?.adapter ? "确定性 adapter" : (job.run?.model || "-")],
     ["尝试次数", attempts.length || "-"],
     ["退出码", job.run?.exitCode ?? "-"],
-    ["错误", job.run?.error || "-"],
   ];
+
+  const errorValue = job.run?.error || "";
 
   els.jobMeta.innerHTML = rows
     .map(([key, value]) => `<dt>${escapeHtml(key)}</dt><dd>${escapeHtml(String(value))}</dd>`)
-    .join("");
+    .join("") + (errorValue
+      ? `<dt class="error-label">错误</dt><dd class="error-value">${escapeHtml(errorValue)}</dd>`
+      : "");
   renderProgress(job);
 }
 
 function renderJobs() {
-  if (!state.jobs.length) {
-    els.jobsList.innerHTML = '<div class="empty">暂无任务</div>';
+  const filterTemplate = els.filterTemplate?.value || "";
+  const filterStatus = els.filterStatus?.value || "";
+
+  const filtered = state.jobs.filter((job) => {
+    if (filterTemplate && (job.template || job.type || "custom") !== filterTemplate) return false;
+    if (filterStatus && job.status !== filterStatus) return false;
+    return true;
+  });
+
+  if (!filtered.length) {
+    const hasFilter = filterTemplate || filterStatus;
+    els.jobsList.innerHTML = `<div class="empty">${hasFilter ? "无匹配任务" : "暂无任务"}</div>`;
     return;
   }
 
-  els.jobsList.innerHTML = state.jobs
+  els.jobsList.innerHTML = filtered
     .map((job) => {
       const active = job.id === state.currentJobId ? " is-active" : "";
+      const failedClass = job.status === "failed" ? " is-failed" : "";
       const title = job.title || job.id;
       const template = job.template || job.type || "custom";
       return `
-        <button class="job-item${active}" type="button" data-job-id="${escapeHtml(job.id)}">
+        <button class="job-item${active}${failedClass}" type="button" data-job-id="${escapeHtml(job.id)}">
           <span>
             <span class="job-title">${escapeHtml(title)}</span>
             <span class="job-sub">${escapeHtml(job.id)} · ${escapeHtml(displayTemplate(template))}</span>
           </span>
-          <span class="badge">${escapeHtml(displayStatus(job.status))}</span>
+          <span class="badge ${job.status}">${escapeHtml(displayStatus(job.status))}</span>
         </button>
       `;
     })
@@ -406,34 +428,76 @@ function renderJobs() {
   }
 }
 
-function renderOutputs(files = []) {
+function renderOutputs(outputsData = {}) {
   if (!state.currentJob) {
     els.outputs.innerHTML = '<div class="empty">未选择任务</div>';
     return;
   }
+
+  const files = outputsData.files || [];
+  const groups = outputsData.groups || null;
+  const outputCategory = outputsData.outputCategory || null;
 
   if (!files.length) {
     els.outputs.innerHTML = '<div class="empty">暂无输出文件</div>';
     return;
   }
 
-  const grouped = groupOutputFiles(files);
-  els.outputs.innerHTML = grouped
-    .map((group) => `
-      <section class="output-group">
+  const jobId = state.currentJob.id;
+  const isSubmission = outputCategory === "submission";
+
+  // Use backend template-aware groups if available, else fallback to generic groups
+  const displayGroups = groups || groupOutputFilesFallback(files);
+
+  // Build header with job ID copy button
+  let headerHtml = `<div class="outputs-header">`;
+  headerHtml += `<button class="copy-job-id" type="button" data-job-id="${escapeAttribute(jobId)}" title="复制任务 ID">📋 ${escapeHtml(jobId.slice(0, 16))}…</button>`;
+  headerHtml += `</div>`;
+
+  // Render each group
+  const groupsHtml = displayGroups.map((group) => {
+    const icon = group.icon || "📁";
+    const filesHtml = group.files.map((file) => {
+      const isPreviewable = isPreviewableFile(file.path);
+      const previewId = isPreviewable ? `preview-${btoa(file.path).replace(/[^a-zA-Z0-9]/g, '')}` : '';
+      let fileHtml = `
+        <div class="output-file-row">
+          <a class="output-link" href="${escapeAttribute(outputUrl(jobId, file.path))}" target="_blank" rel="noreferrer">
+            <span class="output-name">${escapeHtml(file.path)}</span>
+            <span class="output-size">${formatBytes(file.size)}</span>
+          </a>
+          ${isPreviewable ? `<button class="preview-toggle" type="button" data-preview-id="${previewId}" data-file-path="${escapeAttribute(file.path)}">预览</button>` : ''}
+        </div>
+        ${isPreviewable ? `<div class="preview-content" id="${previewId}"></div>` : ''}
+      `;
+      return fileHtml;
+    }).join("");
+
+    return `
+      <section class="output-group ${isSubmission ? 'is-submission' : ''}">
         <div class="output-group-head">
-          <strong>${escapeHtml(group.label)}</strong>
+          <strong>${icon} ${escapeHtml(group.label)}</strong>
           <span>${group.files.length} 个文件</span>
         </div>
-        ${group.files.map((file) => `
-          <a class="output-link" href="${escapeAttribute(outputUrl(state.currentJob.id, file.path))}" target="_blank" rel="noreferrer">
-            <span>${escapeHtml(file.path)}</span>
-            <span>${formatBytes(file.size)}</span>
-          </a>
-        `).join("")}
+        ${filesHtml}
       </section>
-    `)
-    .join("");
+    `;
+  }).join("");
+
+  els.outputs.innerHTML = headerHtml + groupsHtml;
+
+  // Bind preview toggles
+  for (const btn of els.outputs.querySelectorAll('.preview-toggle')) {
+    btn.addEventListener('click', () => loadPreview(btn.dataset.previewId, btn.dataset.filePath));
+  }
+
+  // Bind copy job ID
+  const copyBtn = els.outputs.querySelector('.copy-job-id');
+  if (copyBtn) {
+    copyBtn.addEventListener('click', () => {
+      navigator.clipboard.writeText(copyBtn.dataset.jobId).then(() => toast('已复制任务 ID'));
+    });
+  }
 }
 
 function renderLogs() {
@@ -469,6 +533,30 @@ function progressSteps(job) {
 function renderProgress(job) {
   const percent = progressPercent(job);
   const steps = progressSteps(job);
+  const events = state.events || [];
+  const humanHtml = renderHumanVerification();
+  const latestEvents = events.slice(-12).reverse();
+  const eventsHtml = latestEvents.length
+    ? `
+      <div class="execution-events">
+        <div class="execution-events-head">
+          <span>业务执行状态</span>
+          <small>${events.length} 条</small>
+        </div>
+        <ol>
+          ${latestEvents.map((event) => `
+            <li class="event-${escapeAttribute(event.status || "info")}">
+              <span class="event-dot"></span>
+              <span>
+                <strong>${escapeHtml(event.label || "执行事件")}</strong>
+                ${event.detail ? `<small>${escapeHtml(event.detail)}</small>` : ""}
+              </span>
+            </li>
+          `).join("")}
+        </ol>
+      </div>
+    `
+    : '<div class="execution-events empty compact">暂无业务执行状态。</div>';
   els.jobProgress.innerHTML = `
     <div class="progress-head">
       <span>任务进度</span>
@@ -484,11 +572,46 @@ function renderProgress(job) {
         </li>
       `).join("")}
     </ol>
+    ${humanHtml}
+    ${eventsHtml}
   `;
 }
 
-function outputCategory(path) {
-  const lower = path.toLowerCase();
+function renderHumanVerification() {
+  const actions = state.humanActions || [];
+  if (!actions.length || !state.currentJob) return "";
+  const latest = actions.slice(-3).reverse();
+  const submitted = state.humanInput?.createdAt
+    ? `<div class="human-submitted">已提交人工输入：${escapeHtml(state.humanInput.createdAt)}</div>`
+    : "";
+  return `
+    <section class="human-verification">
+      <div class="human-head">
+        <strong>人工验证</strong>
+        <span>${actions.length} 张截图</span>
+      </div>
+      <div class="human-images">
+        ${latest.map((item) => `
+          <a href="${escapeAttribute(api(item.url))}" target="_blank" rel="noreferrer">
+            <img src="${escapeAttribute(api(item.url))}" alt="${escapeAttribute(item.path)}">
+          </a>
+        `).join("")}
+      </div>
+      <div class="human-form">
+        <select class="human-type" aria-label="人工输入类型">
+          <option value="captcha">验证码</option>
+          <option value="cloudflare">已完成人机验证</option>
+        </select>
+        <input class="human-value" type="text" placeholder="输入验证码，或填“已完成”">
+        <button class="human-submit" type="button">提交给任务</button>
+      </div>
+      ${submitted}
+    </section>
+  `;
+}
+
+function outputFileCategoryFallback(filePath) {
+  const lower = filePath.toLowerCase();
   if (lower.endsWith("summary.txt")) return "summary";
   if (lower.startsWith("processed-materials/")) return "materials";
   if (/\.(docx|doc|pdf|md|xlsx|xls|csv)$/.test(lower)) return "reports";
@@ -500,23 +623,64 @@ function outputCategory(path) {
   return "other";
 }
 
-function groupOutputFiles(files) {
+function groupOutputFilesFallback(files) {
   const definitions = [
-    ["summary", "执行摘要"],
-    ["reports", "报告与表格"],
-    ["json", "结构化 JSON"],
-    ["images", "图片"],
-    ["archives", "压缩包"],
-    ["media", "视频材料"],
-    ["html", "HTML 预览"],
-    ["materials", "处理后材料"],
-    ["other", "其他文件"],
+    ["summary", "执行摘要", "📋"],
+    ["reports", "报告与表格", "📝"],
+    ["json", "结构化 JSON", "🔧"],
+    ["images", "图片", "🖼️"],
+    ["archives", "压缩包", "📦"],
+    ["media", "视频材料", "🎬"],
+    ["html", "HTML 预览", "👁️"],
+    ["materials", "处理后材料", "📂"],
+    ["other", "其他文件", "📁"],
   ];
-  const groups = new Map(definitions.map(([key, label]) => [key, { key, label, files: [] }]));
+  const groups = new Map(definitions.map(([key, label, icon]) => [key, { key, label, icon, files: [] }]));
   for (const file of files) {
-    groups.get(outputCategory(file.path)).files.push(file);
+    groups.get(outputFileCategoryFallback(file.path)).files.push(file);
   }
   return Array.from(groups.values()).filter((group) => group.files.length);
+}
+
+function isPreviewableFile(filePath) {
+  const lower = filePath.toLowerCase();
+  return lower.endsWith("summary.txt") || lower.endsWith("form_context.json")
+    || lower.endsWith("material-result.json") || lower.endsWith("submission-result.json")
+    || lower.endsWith("batch-state.json") || lower.endsWith("update-result.json");
+}
+
+async function loadPreview(previewId, filePath) {
+  const container = document.getElementById(previewId);
+  if (!container || !state.currentJob) return;
+
+  if (container.classList.contains('is-loaded')) {
+    container.classList.toggle('is-visible');
+    return;
+  }
+
+  container.innerHTML = '<div class="preview-loading">加载中…</div>';
+  container.classList.add('is-visible');
+
+  try {
+    const url = outputUrl(state.currentJob.id, filePath);
+    const response = await fetch(url);
+    const text = await response.text();
+    const isJson = filePath.toLowerCase().endsWith('.json');
+
+    if (isJson) {
+      try {
+        const parsed = JSON.parse(text);
+        container.innerHTML = `<pre class="preview-json">${escapeHtml(JSON.stringify(parsed, null, 2))}</pre>`;
+      } catch {
+        container.innerHTML = `<pre class="preview-text">${escapeHtml(text)}</pre>`;
+      }
+    } else {
+      container.innerHTML = `<pre class="preview-text">${escapeHtml(text)}</pre>`;
+    }
+    container.classList.add('is-loaded');
+  } catch (error) {
+    container.innerHTML = `<div class="preview-error">加载失败：${escapeHtml(error.message)}</div>`;
+  }
 }
 
 function renderTemplateControls() {
@@ -577,6 +741,15 @@ async function loadHealth() {
       .map((item) => `<option value="${escapeAttribute(item.name)}">${escapeHtml(displayTemplate(item.name))}</option>`)
       .join("");
     els.template.value = health.templates.some((item) => item.name === current) ? current : "md2wechat";
+
+    // Populate filter template dropdown
+    if (els.filterTemplate) {
+      const filterCurrent = els.filterTemplate.value;
+      els.filterTemplate.innerHTML = `<option value="">全部模板</option>` + health.templates
+        .map((item) => `<option value="${escapeAttribute(item.name)}">${escapeHtml(displayTemplate(item.name))}</option>`)
+        .join("");
+      if (filterCurrent) els.filterTemplate.value = filterCurrent;
+    }
   }
   renderTemplateControls();
 }
@@ -608,18 +781,41 @@ async function refreshCurrent() {
     return;
   }
 
-  const [job, logs, outputs] = await Promise.all([
+  const [job, logs, outputsData] = await Promise.all([
     request(`/jobs/${state.currentJobId}`),
     request(`/jobs/${state.currentJobId}/logs`).catch(() => ({ stdout: "", stderr: "" })),
-    request(`/jobs/${state.currentJobId}/outputs`).catch(() => ({ files: [] })),
+    request(`/jobs/${state.currentJobId}/outputs`).catch(() => ({ files: [], groups: null, outputCategory: null, template: null })),
   ]);
 
   state.currentJob = job;
   state.logs = logs;
+  state.events = logs.events || [];
+  state.humanActions = logs.humanActions || [];
+  state.humanInput = logs.humanInput || null;
   renderStatus();
-  renderOutputs(outputs.files || []);
+  renderOutputs(outputsData);
   renderLogs();
+  bindHumanVerification();
   schedulePoll();
+}
+
+function bindHumanVerification() {
+  const panel = els.jobProgress.querySelector(".human-verification");
+  if (!panel || !state.currentJob) return;
+  const typeInput = panel.querySelector(".human-type");
+  const valueInput = panel.querySelector(".human-value");
+  const submitBtn = panel.querySelector(".human-submit");
+  submitBtn?.addEventListener("click", () => guarded(async () => {
+    const value = valueInput.value.trim();
+    if (!value) throw new Error("请先输入验证码或人工处理结果。");
+    await request(`/jobs/${state.currentJob.id}/human-input`, {
+      method: "POST",
+      body: JSON.stringify({ type: typeInput.value, value }),
+    });
+    valueInput.value = "";
+    await refreshCurrent();
+    toast("人工输入已提交给任务");
+  }));
 }
 
 async function createJob() {
@@ -819,6 +1015,9 @@ els.template.addEventListener("change", () => {
     state.currentJobId = "";
     state.currentJob = null;
     state.logs = { stdout: "", stderr: "" };
+    state.events = [];
+    state.humanActions = [];
+    state.humanInput = null;
     localStorage.removeItem("currentJobId");
   }
   renderTemplateControls();
@@ -847,6 +1046,13 @@ els.runMaterialJob.addEventListener("click", () => guarded(runJob));
 els.cancelJob.addEventListener("click", () => guarded(cancelCurrentJob));
 els.refreshJobs.addEventListener("click", () => guarded(loadJobs));
 els.refreshCurrent.addEventListener("click", () => guarded(refreshCurrent));
+
+if (els.filterTemplate) {
+  els.filterTemplate.addEventListener("change", renderJobs);
+}
+if (els.filterStatus) {
+  els.filterStatus.addEventListener("change", renderJobs);
+}
 
 els.fileInput.addEventListener("change", async () => {
   const [file] = els.fileInput.files;

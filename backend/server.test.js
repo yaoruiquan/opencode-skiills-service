@@ -12,7 +12,9 @@ const {
   complexSkillPrompt,
   contentDispositionAttachment,
   md2wechatPrompt,
+  parseExecutionEvents,
   promptForRun,
+  redactSensitiveText,
   decodePathSegments,
   resolveCreateTemplate,
   resolveRunTemplate,
@@ -257,6 +259,36 @@ test("mode-specific required output contract is enforced", async () => {
   );
 });
 
+test("submit=true submission templates require submission result", async () => {
+  const job = await createJob({ template: "phase2-cnvd-report" });
+  job.run = {
+    template: "phase2-cnvd-report",
+    options: { mode: "single", serviceConfig: { submit: true } },
+  };
+  await fs.writeFile(path.join(job.paths.output, "summary.txt"), "ok\n", "utf8");
+  await fs.writeFile(path.join(job.paths.output, "form_context.json"), "{}\n", "utf8");
+
+  await assert.rejects(
+    () => validateRequiredOutputs(job, "phase2-cnvd-report", "single"),
+    /output\/submission-result\.json/,
+  );
+
+  await fs.writeFile(path.join(job.paths.output, "submission-result.json"), "{\"submitted\":true}\n", "utf8");
+  await assert.doesNotReject(() => validateRequiredOutputs(job, "phase2-cnvd-report", "single"));
+});
+
+test("submit=false submission templates do not require submission result", async () => {
+  const job = await createJob({ template: "phase2-cnvd-report" });
+  job.run = {
+    template: "phase2-cnvd-report",
+    options: { mode: "single", serviceConfig: { submit: false } },
+  };
+  await fs.writeFile(path.join(job.paths.output, "summary.txt"), "ok\n", "utf8");
+  await fs.writeFile(path.join(job.paths.output, "form_context.json"), "{}\n", "utf8");
+
+  await assert.doesNotReject(() => validateRequiredOutputs(job, "phase2-cnvd-report", "single"));
+});
+
 test("running jobs can be canceled and record cancellation state", async () => {
   const job = await createJob({ template: "custom" });
   job.status = "running";
@@ -278,9 +310,186 @@ test("running jobs can be canceled and record cancellation state", async () => {
 
   const canceled = await cancelJob(job);
   const stderr = await fs.readFile(job.run.stderr, "utf8");
+  const cancelMarker = JSON.parse(await fs.readFile(path.join(job.paths.input, "cancel-requested.json"), "utf8"));
 
   assert.equal(canceled.status, "canceled");
   assert.match(canceled.run.error, /canceled by user/);
   assert.ok(canceled.run.canceledAt);
+  assert.equal(cancelMarker.canceled, true);
   assert.match(stderr, /canceled by user/);
+});
+
+test("log redaction masks common secrets before returning logs", () => {
+  const raw = [
+    "EMAIL=user@example.com",
+    "PASSWORD=example-password",
+    "WEBHOOK=https://example.invalid/robot/send?access_token=abc123",
+    JSON.stringify({ password: "secret-pass", value: "user@example.com" }),
+  ].join("\n");
+  const redacted = redactSensitiveText(raw);
+
+  assert.doesNotMatch(redacted, /user@example.com/);
+  assert.doesNotMatch(redacted, /example-password/);
+  assert.doesNotMatch(redacted, /access_token=abc123/);
+  assert.doesNotMatch(redacted, /secret-pass/);
+  assert.match(redacted, /\[REDACTED/);
+});
+
+test("execution events summarize opencode jsonl and stderr", () => {
+  const stdout = [
+    JSON.stringify({ type: "attempt_start", attempt: 1, model: "deepseek/test", timestamp: "2026-05-09T02:00:00.000Z" }),
+    JSON.stringify({
+      type: "tool_use",
+      timestamp: 1778292692765,
+      part: {
+        tool: "chrome-devtools-cnvd_list_pages",
+        state: {
+          status: "completed",
+          input: {},
+          output: "Could not connect to Chrome. Cause: connect ECONNREFUSED 127.0.0.1:9222",
+        },
+      },
+    }),
+  ].join("\n");
+  const stderr = "template phase2-cnvd-report missing required outputs: output/summary.txt\n";
+  const events = parseExecutionEvents(stdout, stderr, "", {
+    id: "job_test",
+    createdAt: "2026-05-09T01:59:00.000Z",
+    status: "failed",
+    run: { startedAt: "2026-05-09T02:00:00.000Z", finishedAt: "2026-05-09T02:01:00.000Z", error: "missing outputs" },
+  });
+
+  assert.ok(events.some((event) => event.label === "第 1 次模型尝试" && event.detail === "deepseek/test"));
+  assert.ok(events.some((event) => event.label === "浏览器 MCP 操作" && event.status === "failed" && /ECONNREFUSED/.test(event.detail)));
+  assert.ok(events.some((event) => event.label === "输出文件校验失败"));
+});
+
+test("execution events prefer business progress jsonl", () => {
+  const progress = [
+    JSON.stringify({ stage: "login", status: "running", detail: "检查 CNVD 登录态", time: "2026-05-09T02:00:00.000Z" }),
+    JSON.stringify({ stage: "fill_form", status: "done", label: "表单字段已填写", detail: "base_info/detail_info", time: "2026-05-09T02:01:00.000Z" }),
+    JSON.stringify({ stage: "captcha", status: "warning", detail: "需要人工识别验证码", time: "2026-05-09T02:02:00.000Z" }),
+  ].join("\n");
+  const events = parseExecutionEvents(
+    '{"type":"step_start"}\n',
+    "template phase2-cnvd-report missing required outputs: output/summary.txt\n",
+    "",
+    { status: "running", run: { startedAt: "2026-05-09T01:59:00.000Z" } },
+    progress,
+  );
+
+  assert.equal(events[0].label, "登录态检查");
+  assert.equal(events[1].label, "表单字段已填写");
+  assert.equal(events[2].label, "验证码识别");
+  assert.ok(!events.some((event) => event.label === "OpenCode 进入新步骤"));
+});
+
+test("adapter target lookup supports nested materials and target_path under materials", async () => {
+  const { findMaterialTarget } = require("./adapters/runner.js");
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), "adapter-target-"));
+  const nestedDas = path.join(root, "materials", "2026-05-07-102233", "DAS-T106053-demo");
+  await fs.mkdir(nestedDas, { recursive: true });
+
+  assert.equal(
+    await findMaterialTarget(root, { das_id: "DAS-T106053" }),
+    nestedDas,
+  );
+  assert.equal(
+    await findMaterialTarget(root, { target_path: "2026-05-07-102233/DAS-T106053-demo" }),
+    nestedDas,
+  );
+
+  await fs.rm(root, { recursive: true, force: true });
+});
+
+async function writeFakePrepareScript(skillRoot, skillName) {
+  const scriptDir = path.join(skillRoot, skillName, "scripts");
+  await fs.mkdir(scriptDir, { recursive: true });
+  await fs.writeFile(
+    path.join(scriptDir, "prepare_form_context.py"),
+    [
+      "import json, pathlib, sys",
+      "args = sys.argv[1:]",
+      "if '--das-id' in args:",
+      "    print('unexpected --das-id', file=sys.stderr)",
+      "    sys.exit(2)",
+      "output = args[args.index('--output') + 1] if '--output' in args else 'form_context.json'",
+      "pathlib.Path(output).parent.mkdir(parents=True, exist_ok=True)",
+      "pathlib.Path(output).write_text(json.dumps({'ready': True, 'args': args}, ensure_ascii=False), encoding='utf-8')",
+      "print(json.dumps({'args': args}, ensure_ascii=False))",
+      "",
+    ].join("\n"),
+    "utf8",
+  );
+}
+
+test("phase2 ncc adapter uses supported prepare_form_context arguments", async () => {
+  const skillRoot = await fs.mkdtemp(path.join(os.tmpdir(), "adapter-skills-"));
+  process.env.SKILLS_API_SKILL_ROOT = skillRoot;
+  await writeFakePrepareScript(skillRoot, "phase2-ncc-report");
+  delete require.cache[require.resolve("./adapters/runner.js")];
+  delete require.cache[require.resolve("./adapters/phase2-ncc-report.js")];
+  const adapter = require("./adapters/phase2-ncc-report.js");
+
+  const job = await createJob({ template: "phase2-ncc-report" });
+  const nestedDas = path.join(job.paths.input, "materials", "2026-05-07-102233", "DAS-T106053-demo");
+  await fs.mkdir(nestedDas, { recursive: true });
+  await writeServiceConfig(job, "phase2-ncc-report", {
+    template: "phase2-ncc-report",
+    options: {
+      mode: "single",
+      serviceConfig: {
+        das_id: "DAS-T106053",
+        target_path: "2026-05-07-102233/DAS-T106053-demo",
+        prefer_source: "CNVD",
+        submit: false,
+      },
+    },
+  });
+
+  const result = await adapter.run(job, {}, "single");
+  const context = JSON.parse(await fs.readFile(path.join(job.paths.output, "form_context.json"), "utf8"));
+
+  assert.equal(result.success, true);
+  assert.ok(context.args.includes("--input-path"));
+  assert.ok(context.args.includes(nestedDas));
+  assert.ok(!context.args.includes("--das-id"));
+
+  await fs.rm(skillRoot, { recursive: true, force: true });
+});
+
+test("phase2 cnnvd adapter forwards service config fields", async () => {
+  const skillRoot = await fs.mkdtemp(path.join(os.tmpdir(), "adapter-skills-"));
+  process.env.SKILLS_API_SKILL_ROOT = skillRoot;
+  await writeFakePrepareScript(skillRoot, "phase2-cnnvd-report");
+  delete require.cache[require.resolve("./adapters/runner.js")];
+  delete require.cache[require.resolve("./adapters/phase2-cnnvd-report.js")];
+  const adapter = require("./adapters/phase2-cnnvd-report.js");
+
+  const job = await createJob({ template: "phase2-cnnvd-report" });
+  const nestedDas = path.join(job.paths.input, "materials", "batch", "DAS-T106053-demo");
+  await fs.mkdir(nestedDas, { recursive: true });
+  await writeServiceConfig(job, "phase2-cnnvd-report", {
+    template: "phase2-cnnvd-report",
+    options: {
+      mode: "single",
+      serviceConfig: {
+        das_id: "DAS-T106053",
+        entity_description: "测试实体描述",
+        verification: "测试验证过程",
+        submit: false,
+      },
+    },
+  });
+
+  const result = await adapter.run(job, {}, "single");
+  const context = JSON.parse(await fs.readFile(path.join(job.paths.output, "form_context.json"), "utf8"));
+
+  assert.equal(result.success, true);
+  assert.ok(context.args.includes("--entity-description"));
+  assert.ok(context.args.includes("测试实体描述"));
+  assert.ok(context.args.includes("--verification"));
+  assert.ok(context.args.includes("测试验证过程"));
+
+  await fs.rm(skillRoot, { recursive: true, force: true });
 });

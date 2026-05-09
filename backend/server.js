@@ -19,6 +19,7 @@ const CAPACITY_RETRY_DELAY_MS = Number(process.env.OPENCODE_CAPACITY_RETRY_DELAY
 const MAX_BODY_BYTES = Number(process.env.SKILLS_API_MAX_BODY_MB || 50) * 1024 * 1024;
 const SKILL_ROOT = process.env.SKILLS_API_SKILL_ROOT || "/root/.agents/skills";
 const ACTIVE_RUNS = new Map();
+const CANCEL_MARKER = "cancel-requested.json";
 
 const TEMPLATES = {
   custom: {
@@ -26,6 +27,10 @@ const TEMPLATES = {
     label: "自定义",
     description: "运行调用方提供的提示词，或使用通用默认提示词。",
     inputMode: "freeform",
+    outputGroups: [
+      { key: "summary", label: "执行摘要", icon: "📋", patterns: ["summary.txt"] },
+      { key: "other", label: "其他文件", icon: "📁", patterns: ["*"] },
+    ],
   },
   md2wechat: {
     name: "md2wechat",
@@ -36,6 +41,11 @@ const TEMPLATES = {
     requiredInputs: ["article.md"],
     outputs: ["wechat-article.html", "wechat-cover.png"],
     requiredOutputs: ["wechat-article.html", "wechat-cover.png"],
+    outputGroups: [
+      { key: "article", label: "公众号正文", icon: "📄", patterns: ["wechat-article.html"] },
+      { key: "cover", label: "预警封面图", icon: "🖼️", patterns: ["wechat-cover.png", "*.png", "*.jpg"] },
+      { key: "other", label: "其他文件", icon: "📁", patterns: ["*"] },
+    ],
   },
   "vulnerability-alert-processor": {
     name: "vulnerability-alert-processor",
@@ -59,6 +69,12 @@ const TEMPLATES = {
       wechat_draft: false,
       publish: false,
     },
+    outputGroups: [
+      { key: "summary", label: "执行摘要", icon: "📋", patterns: ["summary.txt"] },
+      { key: "reports", label: "预警报告", icon: "📝", patterns: ["final.md", "final.docx", "final.pdf"] },
+      { key: "context", label: "渲染上下文", icon: "🔧", patterns: ["render_context.json"] },
+      { key: "other", label: "其他文件", icon: "📁", patterns: ["*"] },
+    ],
   },
   "phase1-material-processor": {
     name: "phase1-material-processor",
@@ -76,6 +92,12 @@ const TEMPLATES = {
       das_id: "",
       submitter: "",
     },
+    outputGroups: [
+      { key: "summary", label: "执行摘要", icon: "📋", patterns: ["summary.txt"] },
+      { key: "result", label: "处理结果", icon: "📊", patterns: ["material-result.json"] },
+      { key: "materials", label: "处理后材料", icon: "📂", patterns: ["processed-materials/**"] },
+      { key: "other", label: "其他文件", icon: "📁", patterns: ["*"] },
+    ],
   },
   "msrc-vulnerability-report": {
     name: "msrc-vulnerability-report",
@@ -98,6 +120,12 @@ const TEMPLATES = {
       publish: false,
       dingtalk_notify: false,
     },
+    outputGroups: [
+      { key: "summary", label: "执行摘要", icon: "📋", patterns: ["summary.txt"] },
+      { key: "reports", label: "MSRC 报告", icon: "📝", patterns: ["report.md", "report.docx", "report.pdf"] },
+      { key: "preview", label: "预览", icon: "👁️", patterns: ["preview.html"] },
+      { key: "other", label: "其他文件", icon: "📁", patterns: ["*"] },
+    ],
   },
   "cnvd-weekly-db-update": {
     name: "cnvd-weekly-db-update",
@@ -117,6 +145,11 @@ const TEMPLATES = {
       dry_run: true,
       dingtalk_notify: false,
     },
+    outputGroups: [
+      { key: "summary", label: "执行摘要", icon: "📋", patterns: ["summary.txt"] },
+      { key: "result", label: "更新结果", icon: "📊", patterns: ["update-result.json"] },
+      { key: "other", label: "其他文件", icon: "📁", patterns: ["*"] },
+    ],
   },
   "phase2-cnvd-report": {
     name: "phase2-cnvd-report",
@@ -140,6 +173,13 @@ const TEMPLATES = {
       submit: false,
       dingtalk_notify: false,
     },
+    outputCategory: "submission",
+    outputGroups: [
+      { key: "result", label: "上报结果", icon: "✅", patterns: ["submission-result.json", "batch-state.json"] },
+      { key: "context", label: "表单上下文", icon: "🔧", patterns: ["form_context.json"] },
+      { key: "summary", label: "执行摘要", icon: "📋", patterns: ["summary.txt"] },
+      { key: "other", label: "其他文件", icon: "📁", patterns: ["*"] },
+    ],
   },
   "phase2-cnnvd-report": {
     name: "phase2-cnnvd-report",
@@ -166,6 +206,13 @@ const TEMPLATES = {
       update_summary: false,
       dingtalk_notify: false,
     },
+    outputCategory: "submission",
+    outputGroups: [
+      { key: "result", label: "上报结果", icon: "✅", patterns: ["submission-result.json", "batch-state.json"] },
+      { key: "context", label: "表单上下文", icon: "🔧", patterns: ["form_context.json"] },
+      { key: "summary", label: "执行摘要", icon: "📋", patterns: ["summary.txt"] },
+      { key: "other", label: "其他文件", icon: "📁", patterns: ["*"] },
+    ],
   },
   "phase2-ncc-report": {
     name: "phase2-ncc-report",
@@ -189,6 +236,13 @@ const TEMPLATES = {
       submit: false,
       dingtalk_notify: false,
     },
+    outputCategory: "submission",
+    outputGroups: [
+      { key: "result", label: "上报结果", icon: "✅", patterns: ["submission-result.json"] },
+      { key: "context", label: "表单上下文", icon: "🔧", patterns: ["form_context.json"] },
+      { key: "summary", label: "执行摘要", icon: "📋", patterns: ["summary.txt"] },
+      { key: "other", label: "其他文件", icon: "📁", patterns: ["*"] },
+    ],
   },
 };
 
@@ -215,6 +269,15 @@ function text(res, status, body, contentType = "text/plain; charset=utf-8") {
     "Access-Control-Allow-Origin": "*",
   });
   res.end(body);
+}
+
+function binary(res, status, data, contentType = "application/octet-stream") {
+  res.writeHead(status, {
+    "Content-Type": contentType,
+    "Content-Length": data.length,
+    "Access-Control-Allow-Origin": "*",
+  });
+  res.end(data);
 }
 
 function notFound(res) {
@@ -550,6 +613,9 @@ function complexSkillPrompt(job, template, body, inputFiles) {
   const skillDir = path.join(SKILL_ROOT, definition.skill);
   const materialsDir = path.join(job.paths.input, "materials");
   const configPath = path.join(job.paths.input, "service-config.json");
+  const humanInputPath = path.join(job.paths.input, "human-input.json");
+  const cancelMarkerPath = path.join(job.paths.input, CANCEL_MARKER);
+  const progressPath = path.join(job.paths.logs, "progress.jsonl");
   const fileList = inputFiles.length
     ? inputFiles.map((file) => `- input/${file.path} (${file.size} bytes)`).join("\n")
     : "- 未上传文件；请只使用任务备注或 skill 配置中可解析的 DAS-ID/批次信息。";
@@ -564,6 +630,9 @@ function complexSkillPrompt(job, template, body, inputFiles) {
     `- 材料目录：${materialsDir}`,
     `- 输出目录：${job.paths.output}`,
     `- 日志目录：${job.paths.logs}`,
+    `- 业务进度文件：${progressPath}`,
+    `- 人工输入文件：${humanInputPath}`,
+    `- 取消标记文件：${cancelMarkerPath}`,
     `- 服务化配置：${configPath}`,
     "",
     "调用参数：",
@@ -582,7 +651,12 @@ function complexSkillPrompt(job, template, body, inputFiles) {
     "5. 所有生成文件、状态文件、摘要和可下载产物必须复制或写入本 job output 目录。",
     "6. 运行过程中的关键命令、平台编号、失败原因和人工介入事项写入 output/summary.txt；临时脚本或调试文件写入 logs 目录，不要写入 /tmp。",
     "7. 如果缺少必要输入、账号登录态、远端密钥或验证码，需要明确失败并写入 summary.txt，不要伪造成功。",
-    "8. 最终回复必须列出输出文件、状态和下一步人工动作。",
+    `8. 必须在每个业务阶段开始/成功/失败时向 ${progressPath} 追加一行 JSONL，格式固定为 {"stage":"login|form_context|browser|fill_form|upload|captcha|submit|extract_id|summary","status":"running|done|failed|warning","label":"中文阶段名","detail":"简短说明","time":"ISO-8601 时间"}。`,
+    `9. 写进度推荐使用：python3 -c 'import json,datetime,sys,pathlib; p=pathlib.Path(sys.argv[1]); p.parent.mkdir(parents=True, exist_ok=True); d=json.loads(sys.argv[2]); d.setdefault("time", datetime.datetime.now(datetime.timezone.utc).isoformat()); p.open("a", encoding="utf-8").write(json.dumps(d, ensure_ascii=False)+"\\n")' ${JSON.stringify(progressPath)} '<JSON对象>'`,
+    `10. 遇到 Cloudflare、人机验证、登录验证码或 OCR 无法识别时，不要继续猜测或安装 OCR 依赖；必须截图保存到 logs 目录，文件名包含 captcha、cloudflare、cf 或 human-verification，并写入 progress.jsonl：{"stage":"captcha","status":"warning","label":"等待人工验证","detail":"请在前端查看截图并输入验证码/处理结果"}。`,
+    `11. 写入等待人工验证后，每 5 秒读取一次 ${humanInputPath}；文件存在且 JSON 中 value/code/text 非空后，使用该值继续填写验证码或确认人工已完成。最多等待 10 分钟，超时则写 output/summary.txt 并失败。等待期间如果发现 ${cancelMarkerPath} 存在，必须立即停止后续浏览器操作并退出。`,
+    `12. 每个长耗时等待、验证码重试、登录重试或提交重试前，都必须检查 ${cancelMarkerPath}；存在则写入 progress.jsonl 的 failed 事件并退出，不要继续填表或提交。`,
+    "13. 最终回复必须列出输出文件、状态和下一步人工动作。",
   ];
 
   const specifics = {
@@ -623,32 +697,35 @@ function complexSkillPrompt(job, template, body, inputFiles) {
     ],
     "phase2-cnvd-report": [
       "模板要求：CNVD 平台上报。",
-      "1. 使用 MCP 通道 chrome-devtools-cnvd，Chrome 调试端口 9332。",
+      "0. 业务进度必须按 form_context -> browser -> login -> fill_form -> upload -> captcha -> submit -> extract_id -> summary 写入；submit=false 时 browser/login/fill_form/upload/captcha/submit 可写为 skipped 或 warning。",
+      "1. 使用 MCP 通道 chrome-devtools-cnvd；Docker Chrome 地址为 http://browser-cnvd:9332，不要启动本地 Chrome，不要改用 127.0.0.1:9332。",
       "2. 单个模式必须先运行 scripts/prepare_form_context.py <DAS目录或docx> --data-dir input/materials --output output/form_context.json；目标优先 serviceConfig.target_path/das_id。",
       "3. 批量模式必须先运行 scripts/batch_report.py init <批次目录> --output output/batch-state.json --force，再 start-next，单条上下文仍写 output/form_context.json。",
       "4. 浏览器填写阶段只读取 output/form_context.json、page_payloads 和 browser_helpers，不重新读取 Word 或临时判断字段。",
       "5. service-config.json 中 submit=false 时只完成 form_context 准备和环境检查，不提交平台；submit=true 时才进入浏览器提交。",
       "6. 验证码按 skill 的 captcha-ocr 规则处理；如需人工输入，在 output/summary.txt 明确记录。",
-      "7. 成功后记录 CNVD-ID；批量模式每条 record，全部完成后只 notify 一次。",
+      "7. 成功后必须写 output/submission-result.json，包含 submitted=true、platform_id/CNVD-ID、title、submitted_at；批量模式每条 record，全部完成后只 notify 一次。",
     ],
     "phase2-cnnvd-report": [
       "模板要求：CNNVD 平台上报。",
-      "1. 使用 MCP 通道 chrome-devtools-cnnvd，Chrome 调试端口 9333。",
+      "0. 业务进度必须按 form_context -> browser -> login -> fill_form -> upload -> captcha -> submit -> extract_id -> summary 写入；submit=false 时 browser/login/fill_form/upload/captcha/submit 可写为 skipped 或 warning。",
+      "1. 使用 MCP 通道 chrome-devtools-cnnvd；Docker Chrome 地址为 http://browser-cnnvd:9333，不要启动本地 Chrome，不要改用 127.0.0.1:9333。",
       "2. 单个模式必须先运行 scripts/prepare_form_context.py <DAS目录或docx> --data-dir input/materials --output output/form_context.json；entity_description 和 verification 来自 service-config.json。",
       "3. 批量模式必须先运行 scripts/batch_report.py init <批次目录> --output output/batch-state.json --force，再 start-next，单条上下文仍写 output/form_context.json。",
       "4. 第 1 页下拉和所有文本字段只按 dropdown_plan 与 page_payloads 填写。",
       "5. service-config.json 中 submit=false 时只完成 form_context 准备和环境检查，不提交平台；submit=true 时才进入浏览器提交。",
       "6. 上传 verification_video_path 和 poc_file_path 指向的材料，不重新压缩或临时查找文件。",
-      "7. 成功后记录 CNNVD-ID；update_summary=true 时才按 references/summary-table.md 执行汇总表更新。",
+      "7. 成功后必须写 output/submission-result.json，包含 submitted=true、platform_id/CNNVD-ID、title、submitted_at；update_summary=true 时才按 references/summary-table.md 执行汇总表更新。",
     ],
     "phase2-ncc-report": [
       "模板要求：NCC 平台上报。",
-      "1. 使用 MCP 通道 chrome-devtools-ncc，Chrome 调试端口 9334。",
+      "0. 业务进度必须按 form_context -> browser -> login -> fill_form -> upload -> captcha -> submit -> extract_id -> summary 写入；submit=false 时 browser/login/fill_form/upload/captcha/submit 可写为 skipped 或 warning。",
+      "1. 使用 MCP 通道 chrome-devtools-ncc；Docker Chrome 地址为 http://browser-ncc:9334，不要启动本地 Chrome，不要改用 127.0.0.1:9334。",
       "2. 必须先运行 scripts/prepare_form_context.py --data-dir input/materials --output output/form_context.json；DAS-ID、target_path、prefer_source 优先来自 service-config.json。",
       "3. 浏览器阶段只读 output/form_context.json，不重新读取 Word 或临时判断字段。",
       "4. service-config.json 中 submit=false 时只完成 form_context 准备和环境检查，不提交平台；submit=true 时才打开 NCC 企业中心并提交。",
       "5. 如果出现拖拽拼图验证，记录为人工介入步骤。",
-      "6. 上传 form_context.json 中的 upload_zip_path，成功后记录 NCC 编号。",
+      "6. 上传 form_context.json 中的 upload_zip_path，成功后必须写 output/submission-result.json，包含 submitted=true、platform_id/NCC 编号、title、submitted_at。",
       "7. 输出建议命名：output/form_context.json、output/submission-result.json、output/summary.txt。",
     ],
   };
@@ -685,16 +762,61 @@ async function runJob(job, body) {
   }
 
   const template = resolveRunTemplate(job, body);
+  const options = runOptions(body);
+  const mode = typeof options.mode === "string" ? options.mode.trim() : "";
+  const stdoutPath = path.join(job.paths.logs, "run.jsonl");
+  const stderrPath = path.join(job.paths.logs, "stderr.log");
+  const startedAt = now();
+
+  // For non-custom templates, write the service-config before anything else
+  if (template !== "custom") {
+    await ensureTemplateRunRequirements(job, template, body);
+    await writeServiceConfig(job, template, body);
+  }
+
+  // Try deterministic adapter first
+  const adapter = tryLoadAdapter(template);
+  if (adapter) {
+    job.status = "running";
+    job.template = template;
+    job.run = {
+      template,
+      options,
+      model: "adapter",
+      models: [],
+      prompt: "(deterministic adapter)",
+      startedAt,
+      finishedAt: null,
+      exitCode: null,
+      stdout: stdoutPath,
+      stderr: stderrPath,
+      attempts: [],
+      adapter: true,
+    };
+    await writeJob(job);
+    await fsp.writeFile(stdoutPath, "", "utf8");
+    await fsp.writeFile(stderrPath, "", "utf8");
+
+    // Run adapter asynchronously
+    runAdapterAsync(job.id, adapter, body, mode).catch(async (error) => {
+      const latest = await readJob(job.id);
+      if (isCanceled(latest)) return;
+      latest.status = "failed";
+      latest.run.finishedAt = now();
+      latest.run.error = error.message || String(error);
+      await writeJob(latest);
+    });
+
+    return job;
+  }
+
+  // No adapter or adapter not applicable — use OpenCode prompt path
   const prompt = await promptForRun(job, body, template);
   const requestedModels = Array.isArray(body.models) ? body.models : [];
   const modelCandidates = [...requestedModels, body.model || DEFAULT_MODEL, ...FALLBACK_MODELS]
     .filter((model) => typeof model === "string" && model.trim())
     .map((model) => model.trim())
     .filter((model, index, models) => models.indexOf(model) === index);
-  const stdoutPath = path.join(job.paths.logs, "run.jsonl");
-  const stderrPath = path.join(job.paths.logs, "stderr.log");
-  const startedAt = now();
-  const options = runOptions(body);
 
   job.status = "running";
   job.template = template;
@@ -730,6 +852,141 @@ async function runJob(job, body) {
   return job;
 }
 
+/**
+ * Try to load a deterministic adapter for the given template.
+ * Returns null if no adapter exists or if it can't be loaded.
+ */
+function tryLoadAdapter(template) {
+  const relativePath = `./adapters/${template}.js`;
+  try {
+    return require(relativePath);
+  } catch (error) {
+    if (error.code === "MODULE_NOT_FOUND" && error.message.includes(relativePath)) {
+      return null;
+    }
+    throw error;
+  }
+}
+
+async function writeCancelMarker(job, canceledAt) {
+  const payload = {
+    canceled: true,
+    canceledAt,
+    reason: "canceled by user",
+  };
+  await fsp.writeFile(path.join(job.paths.input, CANCEL_MARKER), JSON.stringify(payload, null, 2) + "\n", "utf8");
+}
+
+function stopActiveChild(active) {
+  const child = active?.child;
+  if (!child || child.killed) return;
+
+  if (typeof child.pid === "number" && process.platform !== "win32") {
+    try {
+      process.kill(-child.pid, "SIGTERM");
+    } catch {
+      try {
+        child.kill("SIGTERM");
+      } catch {
+        // Best-effort cancellation; the persisted cancel marker still guards long waits.
+      }
+    }
+    const killTimer = setTimeout(() => {
+      if (child.exitCode === null && child.signalCode === null) {
+        try {
+          process.kill(-child.pid, "SIGKILL");
+        } catch {
+          try {
+            child.kill("SIGKILL");
+          } catch {
+            // Ignore final best-effort failure.
+          }
+        }
+      }
+    }, 5000);
+    killTimer.unref?.();
+    return;
+  }
+
+  try {
+    child.kill("SIGTERM");
+  } catch {
+    // Ignore best-effort failure.
+  }
+}
+
+/**
+ * Run a deterministic adapter asynchronously.
+ * If the adapter returns null, fall through to OpenCode prompt path.
+ */
+async function runAdapterAsync(jobId, adapter, body, mode) {
+  const job = await readJob(jobId);
+  if (isCanceled(job)) return;
+
+  const adapterContext = {
+    registerChild(child) {
+      ACTIVE_RUNS.set(jobId, { child, startedAt: now(), adapter: true });
+    },
+    unregisterChild(child) {
+      const active = ACTIVE_RUNS.get(jobId);
+      if (active?.child === child) {
+        ACTIVE_RUNS.delete(jobId);
+      }
+    },
+  };
+
+  const result = await adapter.run(job, body, mode, adapterContext);
+
+  // Adapter returned null → needs OpenCode (e.g. submit=true)
+  if (result === null) {
+    const latest = await readJob(jobId);
+    if (isCanceled(latest)) return;
+
+    // Switch to OpenCode prompt path
+    const template = latest.run.template;
+    const prompt = await promptForRun(latest, body, template);
+    const requestedModels = Array.isArray(body.models) ? body.models : [];
+    const modelCandidates = [...requestedModels, body.model || DEFAULT_MODEL, ...FALLBACK_MODELS]
+      .filter((m) => typeof m === "string" && m.trim())
+      .map((m) => m.trim())
+      .filter((m, i, arr) => arr.indexOf(m) === i);
+
+    latest.run.model = modelCandidates[0];
+    latest.run.models = modelCandidates;
+    latest.run.prompt = prompt;
+    latest.run.adapter = false;
+    await writeJob(latest);
+
+    await runJobAttempts(jobId, prompt, modelCandidates, body);
+    return;
+  }
+
+  const latest = await readJob(jobId);
+  if (isCanceled(latest)) return;
+
+  if (result.success) {
+    try {
+      await validateRequiredOutputs(latest, latest.run.template, mode);
+    } catch (error) {
+      latest.status = "failed";
+      latest.run.finishedAt = now();
+      latest.run.exitCode = 0;
+      latest.run.error = error.message || String(error);
+      await writeJob(latest);
+      return;
+    }
+    latest.status = "succeeded";
+    latest.run.finishedAt = now();
+    latest.run.exitCode = 0;
+  } else {
+    latest.status = "failed";
+    latest.run.finishedAt = now();
+    latest.run.exitCode = 1;
+    latest.run.error = result.error || "adapter execution failed";
+  }
+  await writeJob(latest);
+}
+
 async function cancelJob(job) {
   if (!isActiveStatus(job.status)) {
     throw new Error("job is not running");
@@ -743,17 +1000,12 @@ async function cancelJob(job) {
     job.run.canceledAt = canceledAt;
     job.run.error = "canceled by user";
   }
+  await writeCancelMarker(job, canceledAt);
   await appendFile(path.join(job.paths.logs, "stderr.log"), `canceled by user at ${canceledAt}\n`);
   await writeJob(job);
 
-  if (active?.child && !active.child.killed) {
-    active.child.kill("SIGTERM");
-    const killTimer = setTimeout(() => {
-      if (active.child.exitCode === null && active.child.signalCode === null) {
-        active.child.kill("SIGKILL");
-      }
-    }, 5000);
-    killTimer.unref?.();
+  if (active?.child) {
+    stopActiveChild(active);
   } else {
     ACTIVE_RUNS.delete(job.id);
   }
@@ -898,6 +1150,7 @@ function runOpenCodeAttempt(job, prompt, model, body, stdoutPath, stderrPath) {
       cwd: job.paths.root,
       env: process.env,
       stdio: ["ignore", "pipe", "pipe"],
+      detached: process.platform !== "win32",
     });
     ACTIVE_RUNS.set(job.id, { child, startedAt: now() });
 
@@ -935,7 +1188,311 @@ function runOpenCodeAttempt(job, prompt, model, body, stdoutPath, stderrPath) {
 async function readLogs(job) {
   const stdout = await fsp.readFile(path.join(job.paths.logs, "run.jsonl"), "utf8").catch(() => "");
   const stderr = await fsp.readFile(path.join(job.paths.logs, "stderr.log"), "utf8").catch(() => "");
-  return { stdout, stderr };
+  const adapter = await fsp.readFile(path.join(job.paths.logs, "adapter.log"), "utf8").catch(() => "");
+  const progress = await fsp.readFile(path.join(job.paths.logs, "progress.jsonl"), "utf8").catch(() => "");
+  const humanActions = await listHumanActions(job);
+  const humanInput = await readHumanInput(job);
+  const redactedStdout = redactSensitiveText(stdout);
+  const redactedStderr = redactSensitiveText(stderr);
+  const redactedAdapter = redactSensitiveText(adapter);
+  const redactedProgress = redactSensitiveText(progress);
+  return {
+    stdout: redactedStdout,
+    stderr: redactedStderr,
+    adapter: redactedAdapter,
+    progress: redactedProgress,
+    events: parseExecutionEvents(redactedStdout, redactedStderr, redactedAdapter, job, redactedProgress),
+    humanActions,
+    humanInput,
+  };
+}
+
+function redactSensitiveText(value = "") {
+  return String(value)
+    .replace(/\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}\b/gi, "[REDACTED_EMAIL]")
+    .replace(/((?:PASSWORD|PASSWD|SECRET|TOKEN|WEBHOOK|ACCESS_TOKEN|API_KEY|EMAIL)\s*[=:]\s*)([^\s"',]+)/gi, "$1[REDACTED]")
+    .replace(/("(?:password|passwd|secret|token|webhook|access_token|api_key|email)"\s*:\s*")[^"]*(")/gi, "$1[REDACTED]$2")
+    .replace(/("value"\s*:\s*")([^"]*(?:@|password|passwd|secret|token|webhook|access_token|api_key)[^"]*)(")/gi, "$1[REDACTED]$3");
+}
+
+async function listHumanActions(job) {
+  const files = await listFiles(job.paths.logs);
+  return files
+    .filter((file) => /\.(png|jpg|jpeg|webp)$/i.test(file.path))
+    .filter((file) => /captcha|cloudflare|cf_|human|verify|verification/i.test(file.path))
+    .map((file) => ({
+      ...file,
+      url: `/jobs/${encodeURIComponent(job.id)}/logs/${file.path.split("/").map(encodeURIComponent).join("/")}`,
+    }));
+}
+
+async function readHumanInput(job) {
+  const target = path.join(job.paths.input, "human-input.json");
+  try {
+    return JSON.parse(await fsp.readFile(target, "utf8"));
+  } catch {
+    return null;
+  }
+}
+
+async function writeHumanInput(job, body) {
+  const value = String(body.value || body.code || body.text || "").trim();
+  if (!value) {
+    throw new Error("human input value is required");
+  }
+  const payload = {
+    type: String(body.type || "captcha"),
+    value,
+    note: String(body.note || ""),
+    createdAt: now(),
+  };
+  const inputPath = path.join(job.paths.input, "human-input.json");
+  const logPath = path.join(job.paths.logs, "human-input.json");
+  await fsp.writeFile(inputPath, JSON.stringify(payload, null, 2) + "\n", "utf8");
+  await fsp.writeFile(logPath, JSON.stringify({ ...payload, value: maskHumanInputValue(value) }, null, 2) + "\n", "utf8");
+  await appendFile(
+    path.join(job.paths.logs, "progress.jsonl"),
+    JSON.stringify({
+      stage: payload.type === "cloudflare" ? "login" : "captcha",
+      status: "done",
+      label: payload.type === "cloudflare" ? "人工验证已完成" : "人工验证码已提交",
+      detail: payload.type === "cloudflare" ? "前端已确认人工处理完成。" : "前端已提交验证码。",
+      time: payload.createdAt,
+    }) + "\n",
+  );
+  return { ok: true, humanInput: payload };
+}
+
+function maskHumanInputValue(value) {
+  if (value.length <= 2) return "*".repeat(value.length);
+  return `${value.slice(0, 1)}${"*".repeat(Math.max(1, value.length - 2))}${value.slice(-1)}`;
+}
+
+function parseExecutionEvents(stdout = "", stderr = "", adapter = "", job = {}, progress = "") {
+  const businessEvents = parseProgressEvents(progress);
+  if (businessEvents.length) {
+    const terminal = [];
+    if (job.run?.finishedAt) {
+      terminal.push({
+        time: job.run.finishedAt,
+        status: job.status === "succeeded" ? "done" : job.status === "failed" ? "failed" : "info",
+        label: `任务${job.status === "succeeded" ? "成功" : job.status === "failed" ? "失败" : "结束"}`,
+        detail: job.run.error || "",
+      });
+    }
+    return [...businessEvents, ...terminal].slice(-80);
+  }
+
+  const events = [];
+  const push = (event) => {
+    if (!event.label) return;
+    const previous = events[events.length - 1];
+    if (previous?.label === event.label && previous?.status === event.status) return;
+    events.push({
+      time: event.time || null,
+      status: event.status || "info",
+      label: event.label,
+      detail: event.detail || "",
+    });
+  };
+
+  if (job.createdAt) {
+    push({ time: job.createdAt, status: "done", label: "任务已创建", detail: job.id || "" });
+  }
+  if (job.run?.startedAt) {
+    push({
+      time: job.run.startedAt,
+      status: "running",
+      label: job.run.adapter ? "adapter 开始执行" : "OpenCode 开始执行",
+      detail: job.run.adapter ? "确定性 adapter" : (job.run.model || ""),
+    });
+  }
+
+  for (const rawLine of stdout.split(/\r?\n/)) {
+    const line = rawLine.trim();
+    if (!line) continue;
+
+    let data = null;
+    try {
+      data = JSON.parse(line);
+    } catch {
+      push({ status: "info", label: "输出日志", detail: compactLine(line) });
+      continue;
+    }
+
+    const time = normalizeEventTime(data.timestamp);
+    if (data.type === "attempt_start") {
+      push({
+        time,
+        status: "running",
+        label: `第 ${data.attempt || "?"} 次模型尝试`,
+        detail: data.model || "",
+      });
+      continue;
+    }
+
+    if (data.type === "step_start") {
+      push({ time, status: "running", label: "OpenCode 进入新步骤" });
+      continue;
+    }
+
+    if (data.type === "step_finish") {
+      const reason = data.part?.reason || "";
+      push({ time, status: "done", label: "OpenCode 完成一个步骤", detail: reason });
+      continue;
+    }
+
+    if (data.type === "tool_use") {
+      push(toolUseEvent(data, time));
+    }
+  }
+
+  for (const rawLine of adapter.split(/\r?\n/)) {
+    const line = rawLine.trim();
+    if (!line) continue;
+    const [key, ...rest] = line.split(":");
+    const value = rest.join(":").trim();
+    if (key === "adapter") push({ status: "running", label: "adapter 已选择", detail: value });
+    else if (key === "command") push({ status: "running", label: "执行脚本命令", detail: value });
+    else if (key === "exit_code") push({ status: value === "0" ? "done" : "failed", label: "脚本执行结束", detail: `退出码 ${value}` });
+    else if (key === "error") push({ status: "failed", label: "adapter 错误", detail: value });
+  }
+
+  for (const rawLine of stderr.split(/\r?\n/)) {
+    const line = stripAnsi(rawLine).trim();
+    if (!line) continue;
+    if (/permission requested/i.test(line)) {
+      push({ status: "warning", label: "等待或拒绝权限", detail: compactLine(line) });
+    } else if (/missing required outputs/i.test(line)) {
+      push({ status: "failed", label: "输出文件校验失败", detail: compactLine(line) });
+    } else if (/capacity|rate.?limit|overloaded/i.test(line)) {
+      push({ status: "warning", label: "模型容量或限流", detail: compactLine(line) });
+    } else if (/canceled by user/i.test(line)) {
+      push({ status: "failed", label: "任务已被中断", detail: compactLine(line) });
+    } else {
+      push({ status: "warning", label: "错误输出", detail: compactLine(line) });
+    }
+  }
+
+  if (job.run?.finishedAt) {
+    push({
+      time: job.run.finishedAt,
+      status: job.status === "succeeded" ? "done" : job.status === "failed" ? "failed" : "info",
+      label: `任务${job.status === "succeeded" ? "成功" : job.status === "failed" ? "失败" : "结束"}`,
+      detail: job.run.error || "",
+    });
+  }
+
+  return events.slice(-80);
+}
+
+function parseProgressEvents(progress = "") {
+  const events = [];
+  for (const rawLine of progress.split(/\r?\n/)) {
+    const line = rawLine.trim();
+    if (!line) continue;
+    let data = null;
+    try {
+      data = JSON.parse(line);
+    } catch {
+      events.push({ time: null, status: "warning", label: "进度记录格式错误", detail: compactLine(line) });
+      continue;
+    }
+    const label = data.label || businessStageLabel(data.stage);
+    if (!label) continue;
+    events.push({
+      time: normalizeEventTime(data.time || data.timestamp),
+      status: normalizeProgressStatus(data.status),
+      label,
+      detail: compactLine(data.detail || data.message || data.stage || ""),
+      stage: data.stage || "",
+    });
+  }
+  return events.slice(-80);
+}
+
+function businessStageLabel(stage) {
+  const labels = {
+    form_context: "准备表单上下文",
+    browser: "连接浏览器",
+    login: "登录态检查",
+    fill_form: "填写表单",
+    upload: "上传附件",
+    captcha: "验证码识别",
+    submit: "提交平台",
+    extract_id: "提取平台编号",
+    summary: "生成执行摘要",
+  };
+  return labels[stage] || stage || "";
+}
+
+function normalizeProgressStatus(status) {
+  if (["running", "done", "failed", "warning", "info"].includes(status)) return status;
+  if (status === "skipped") return "warning";
+  if (status === "success" || status === "succeeded") return "done";
+  if (status === "error") return "failed";
+  return "info";
+}
+
+function toolUseEvent(data, time) {
+  const part = data.part || {};
+  const tool = part.tool || "tool";
+  const state = part.state || {};
+  const status = state.status || "running";
+  const input = state.input || {};
+  const output = typeof state.output === "string" ? state.output : "";
+  const detail = toolDetail(tool, input, output);
+  const eventStatus = /Could not connect|ECONNREFUSED|not found|failed|error/i.test(output)
+    ? "failed"
+    : status === "completed" ? "done" : status === "error" ? "failed" : "running";
+
+  return {
+    time,
+    status: eventStatus,
+    label: toolLabel(tool),
+    detail,
+  };
+}
+
+function toolLabel(tool) {
+  if (tool === "skill") return "加载 skill";
+  if (tool === "bash") return "执行命令";
+  if (tool === "read") return "读取文件";
+  if (tool === "write" || tool === "edit") return "写入文件";
+  if (tool === "todowrite") return "更新执行清单";
+  if (tool.startsWith("chrome-devtools-")) return "浏览器 MCP 操作";
+  return `调用工具：${tool}`;
+}
+
+function toolDetail(tool, input, output) {
+  if (tool === "skill") return input.name || "";
+  if (tool === "bash") return input.description || input.command || compactLine(output);
+  if (tool === "read") return input.filePath ? path.basename(input.filePath) : "";
+  if (tool === "todowrite") return "执行步骤已更新";
+  if (tool.startsWith("chrome-devtools-")) {
+    const action = tool.replace(/^chrome-devtools-[^_]+_?/, "");
+    return compactLine(output) || action || tool;
+  }
+  return compactLine(output);
+}
+
+function normalizeEventTime(value) {
+  if (!value) return null;
+  if (typeof value === "string") return value;
+  if (typeof value === "number" && Number.isFinite(value)) {
+    const date = new Date(value);
+    return Number.isNaN(date.getTime()) ? null : date.toISOString();
+  }
+  return null;
+}
+
+function compactLine(value, maxLength = 180) {
+  const text = stripAnsi(String(value || "")).replace(/\s+/g, " ").trim();
+  return text.length > maxLength ? `${text.slice(0, maxLength - 1)}…` : text;
+}
+
+function stripAnsi(value) {
+  return String(value || "").replace(/\x1B\[[0-?]*[ -/]*[@-~]/g, "");
 }
 
 async function listFiles(root) {
@@ -966,8 +1523,16 @@ function requiredOutputsFor(template, mode) {
   return definition.requiredOutputs || [];
 }
 
+function isSubmitRun(job, template) {
+  const definition = TEMPLATES[template] || {};
+  return definition.outputCategory === "submission" && job.run?.options?.serviceConfig?.submit === true;
+}
+
 async function validateRequiredOutputs(job, template, mode = "") {
-  const requiredOutputs = requiredOutputsFor(template, mode);
+  const requiredOutputs = [...requiredOutputsFor(template, mode)];
+  if (isSubmitRun(job, template) && !requiredOutputs.includes("submission-result.json")) {
+    requiredOutputs.push("submission-result.json");
+  }
   const missing = [];
 
   for (const relativePath of requiredOutputs) {
@@ -982,6 +1547,45 @@ async function validateRequiredOutputs(job, template, mode = "") {
   if (missing.length) {
     throw new Error(`template ${template} missing required outputs: ${missing.join(", ")}`);
   }
+}
+
+function matchesOutputPattern(filePath, pattern) {
+  if (pattern === "*") return true;
+  const lower = filePath.toLowerCase();
+  const patternLower = pattern.toLowerCase();
+  if (patternLower === lower || patternLower === path.basename(lower)) return true;
+  if (patternLower.startsWith("*.")) {
+    return lower.endsWith(patternLower.slice(1));
+  }
+  if (patternLower.endsWith("/**")) {
+    const prefix = patternLower.slice(0, -3);
+    return lower.startsWith(prefix + "/") || lower === prefix;
+  }
+  return false;
+}
+
+function groupOutputFilesByTemplate(files, outputGroups) {
+  const claimed = new Set();
+  const groups = outputGroups.map((groupDef) => {
+    const matched = [];
+    for (const file of files) {
+      if (claimed.has(file.path)) continue;
+      for (const pattern of groupDef.patterns) {
+        if (matchesOutputPattern(file.path, pattern)) {
+          matched.push(file);
+          claimed.add(file.path);
+          break;
+        }
+      }
+    }
+    return {
+      key: groupDef.key,
+      label: groupDef.label,
+      icon: groupDef.icon || "",
+      files: matched,
+    };
+  });
+  return groups.filter((group) => group.files.length > 0);
 }
 
 async function route(req, res) {
@@ -1052,13 +1656,41 @@ async function route(req, res) {
     return;
   }
 
+  if (req.method === "POST" && parts.length === 3 && parts[2] === "human-input") {
+    const body = await readBody(req);
+    json(res, 201, await writeHumanInput(job, body));
+    return;
+  }
+
   if (req.method === "GET" && parts.length === 3 && parts[2] === "logs") {
     json(res, 200, await readLogs(job));
     return;
   }
 
+  if (req.method === "GET" && parts.length >= 4 && parts[2] === "logs") {
+    const relativePath = decodePathSegments(parts.slice(3));
+    const target = safeJoin(job.paths.logs, relativePath);
+    const data = await fsp.readFile(target);
+    const lower = target.toLowerCase();
+    const contentType = lower.endsWith(".png")
+      ? "image/png"
+      : lower.endsWith(".jpg") || lower.endsWith(".jpeg")
+        ? "image/jpeg"
+        : lower.endsWith(".webp")
+          ? "image/webp"
+          : "application/octet-stream";
+    binary(res, 200, data, contentType);
+    return;
+  }
+
   if (req.method === "GET" && parts.length === 3 && parts[2] === "outputs") {
-    json(res, 200, { files: await listFiles(job.paths.output) });
+    const files = await listFiles(job.paths.output);
+    const template = job.template || job.type || "custom";
+    const definition = TEMPLATES[template] || {};
+    const outputGroups = definition.outputGroups || null;
+    const outputCategory = definition.outputCategory || null;
+    const groups = outputGroups ? groupOutputFilesByTemplate(files, outputGroups) : null;
+    json(res, 200, { files, template, outputCategory, groups });
     return;
   }
 
@@ -1112,8 +1744,12 @@ module.exports = {
   createJob,
   defaultPrompt,
   decodePathSegments,
+  groupOutputFilesByTemplate,
+  matchesOutputPattern,
   md2wechatPrompt,
+  parseExecutionEvents,
   promptForRun,
+  redactSensitiveText,
   resolveCreateTemplate,
   resolveRunTemplate,
   serviceConfig,

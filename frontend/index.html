@@ -169,6 +169,19 @@
               <h2>任务列表</h2>
               <button id="refreshJobs" type="button">刷新</button>
             </div>
+            <div class="filter-bar">
+              <select id="filterTemplate">
+                <option value="">全部模板</option>
+              </select>
+              <select id="filterStatus">
+                <option value="">全部状态</option>
+                <option value="created">已创建</option>
+                <option value="running">运行中</option>
+                <option value="succeeded">已成功</option>
+                <option value="failed">已失败</option>
+                <option value="canceled">已中断</option>
+              </select>
+            </div>
             <div id="jobsList" class="jobs-list"></div>
           </section>
         </aside>
