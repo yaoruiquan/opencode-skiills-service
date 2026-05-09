@@ -103,6 +103,8 @@ const CONFIG_FIELD_LABELS = {
   advisory_url: "公告链接",
   batch_dir: "批次目录",
   cve: "CVE 编号",
+  cnvd_email: "CNVD 账号",
+  cnvd_password: "CNVD 密码",
   das_id: "DAS 编号",
   dingtalk_notify: "钉钉通知",
   docker_container: "Docker 容器名",
@@ -127,6 +129,8 @@ const CONFIG_FIELD_HELP = {
   advisory_url: "厂商公告或参考链接，可为空。",
   batch_dir: "位于 input/materials 下的批次目录名。",
   cve: "用于漏洞预警材料生成，可为空。",
+  cnvd_email: "仅用于本次 CNVD 登录，不填写时需要先在 Docker Chrome 中保持登录态。",
+  cnvd_password: "仅用于本次 CNVD 登录；前端本地保存配置时请注意风险。",
   das_id: "指定单个 DAS-T 编号。",
   dingtalk_notify: "需要服务器预先配置 webhook，smoke test 保持关闭。",
   docker_container: "CNVD 周库更新目标容器名。",
@@ -295,7 +299,7 @@ function renderConfigForm(template, config) {
             <strong>${escapeHtml(label)}</strong>
             <small>${escapeHtml(help)}</small>
           </span>
-          <input type="text" data-config-key="${escapeAttribute(key)}" value="${escapeAttribute(String(value ?? ""))}">
+          <input type="${key.toLowerCase().includes("password") ? "password" : "text"}" data-config-key="${escapeAttribute(key)}" value="${escapeAttribute(String(value ?? ""))}">
         </label>
       `;
     })

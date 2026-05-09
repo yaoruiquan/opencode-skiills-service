@@ -170,6 +170,8 @@ const TEMPLATES = {
     configSchema: {
       das_id: "",
       target_path: "",
+      cnvd_email: "",
+      cnvd_password: "",
       submit: false,
       dingtalk_notify: false,
     },

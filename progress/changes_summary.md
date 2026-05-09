@@ -115,3 +115,37 @@ tryLoadAdapter(template)
 - ✅ 无 adapter 模板 — 正确回退到 OpenCode prompt
 - ✅ `git diff --check` — 无格式问题
 - ✅ `git status` — 无 .env 或敏感文件
+
+---
+
+## 2026-05-09：CNVD submit=true 确定性登录/验证码 adapter
+
+### 已完成
+
+- `phase2-cnvd-report` 的 `submit=true` 不再回退 OpenCode，改为确定性 CDP adapter。
+- 新增轻量 CDP 客户端 `backend/adapters/cdp-client.js`，后端可直接连接 `browser-cnvd:9332`。
+- CNVD adapter 固定流程：
+  1. 运行 `prepare_form_context.py` 生成 `output/form_context.json`。
+  2. 连接 Docker Chrome 并打开 `https://www.cnvd.org.cn/flaw/create`。
+  3. 检查 Cloudflare、登录页、上报表单。
+  4. Cloudflare/登录态失效时截图写入 `logs/`，前端显示人工验证面板。
+  5. 前端提交人工确认或验证码后，当前任务继续执行。
+  6. 登录通过后按 `form_context.json` 填写 Select2、文本字段、是否公开、附件和提交验证码。
+  7. 成功提交后写 `output/submission-result.json` 和 `output/summary.txt`。
+- 前端新增 CNVD 账号、密码配置项；密码字段以 `type=password` 渲染。
+
+### 当前验收结果
+
+- ✅ 后端容器内 `/health` 已返回 `cnvd_email`、`cnvd_password` 配置 schema。
+- ✅ 后端容器可通过 CDP 连接 `http://browser-cnvd:9332`。
+- ✅ smoke job `job_b6b2844fc3f4452d8c3a9707d7d01d5b` 已验证：
+  - `submit=true` 进入确定性 adapter。
+  - 已生成 `form_context.json`。
+  - 已返回 `logs/human-login-cnvd.png` 到前端人工验证面板。
+  - 前端人工输入接口可唤醒等待中的 adapter。
+- ⚠️ 本次 smoke 未真实提交 CNVD：Docker Chrome 未保持 CNVD 登录态，且 smoke 未配置真实 `cnvd_email/cnvd_password`，人工确认后仍未进入上报表单，任务按预期失败并记录原因。
+
+### 其他上报 skill
+
+- 暂未把 `submit=true` 确定性浏览器提交扩展到 CNNVD/NCC。
+- 原因：CNVD 尚未完成一次真实平台提交闭环；CNNVD/NCC 页面结构、验证码和提交流程不同，需要在 CNVD 真实成功后分别固化 adapter，避免把未验证的浏览器逻辑复制到多个平台。
