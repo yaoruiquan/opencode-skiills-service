@@ -609,6 +609,7 @@ async function saveScreenshot(cdp, filePath) {
 }
 
 async function saveCaptchaImage(cdp, filePath, captchaId) {
+  const captchaExpr = captchaId ? `'${captchaId}'` : 'undefined';
   const result = await cdp.evaluate(`(async (captchaId) => {
     const selectors = captchaId
       ? ['#' + captchaId, '#' + captchaId + ' img']
@@ -628,7 +629,7 @@ async function saveCaptchaImage(cdp, filePath, captchaId) {
       reader.readAsDataURL(blob);
     });
     return { ok: true, src, dataUrl };
-  })(captchaId)`);
+  })(${captchaExpr})`);
   if (!result?.ok || !result.dataUrl) {
     return result || { ok: false, reason: "验证码图片截取失败" };
   }
