@@ -168,6 +168,25 @@ async function runBrowserSubmit(job, contextPath, serviceConfig, mode) {
       }
     }
 
+    // Re-check login state before form filling (session may have expired)
+    const preFillGuard = await checkLoginGuard(cdp);
+    if (preFillGuard.isLoginPage || !preFillGuard.hasCreateForm) {
+      await appendProgress(job.paths, { stage: "login", status: "running", label: "会话过期，重新登录", detail: "填写表单前检测到登录态失效。" });
+      const reLogin = await handleLogin(job, cdp, serviceConfig);
+      if (!reLogin.ok) {
+        await writeFailureSummary(job, formContext, reLogin.error, mode);
+        return { success: false, error: reLogin.error };
+      }
+      await cdp.send("Page.navigate", { url: "https://www.cnvd.org.cn/flaw/create" });
+      await sleep(2500);
+      const reLoginGuard = await checkLoginGuard(cdp);
+      if (!reLoginGuard.hasCreateForm) {
+        const error = "重新登录后仍未进入上报表单。";
+        await writeFailureSummary(job, formContext, error, mode);
+        return { success: false, error };
+      }
+    }
+
     await appendProgress(job.paths, { stage: "fill_form", status: "running", label: "填写 CNVD 表单", detail: formContext.title_final_expected || formContext.title || "" });
     await fillCnvdForm(cdp, formContext);
     await appendProgress(job.paths, { stage: "fill_form", status: "done", label: "表单字段已填写", detail: "Select2、文本字段、是否公开已处理。" });
@@ -183,13 +202,31 @@ async function runBrowserSubmit(job, contextPath, serviceConfig, mode) {
       return { success: false, error };
     }
 
-    await appendProgress(job.paths, { stage: "captcha", status: "running", label: "识别提交验证码", detail: "正在截取验证码图片并调用 captcha_ocr.py。" });
-    const code = await resolveCaptchaCode(job, cdp, "captcha-cnvd-submit.png", "提交验证码");
-    await appendProgress(job.paths, { stage: "submit", status: "running", label: "提交 CNVD", detail: "验证码已识别，正在提交。" });
-    await submitCaptcha(cdp, code);
-    await sleep(3500);
+    const maxSubmitRetries = 2;
+    let platformId = null;
+    for (let attempt = 0; attempt <= maxSubmitRetries; attempt++) {
+      if (attempt > 0) {
+        await appendProgress(job.paths, { stage: "captcha", status: "running", label: `提交验证码重试 ${attempt}/${maxSubmitRetries}`, detail: "验证码可能错误，刷新后重新识别。" });
+      } else {
+        await appendProgress(job.paths, { stage: "captcha", status: "running", label: "识别提交验证码", detail: "正在截取验证码图片并调用 captcha_ocr.py。" });
+      }
+      const code = await resolveCaptchaCode(job, cdp, "captcha-cnvd-submit.png", "提交验证码");
+      await appendProgress(job.paths, { stage: "submit", status: "running", label: "提交 CNVD", detail: `验证码已识别，正在提交（第 ${attempt + 1} 次）。` });
+      await submitCaptcha(cdp, code);
+      await sleep(3500);
 
-    const platformId = await extractPlatformId(cdp);
+      platformId = await extractPlatformId(cdp);
+      if (platformId) break;
+
+      // Check if still on form page (captcha was wrong)
+      const postGuard = await checkLoginGuard(cdp);
+      if (postGuard.hasCreateForm) {
+        await writeAdapterLog(job.paths, [`submit: attempt ${attempt + 1} still on form page, captcha likely wrong`]);
+        if (attempt < maxSubmitRetries) continue;
+      }
+      break;
+    }
+
     if (!platformId) {
       await saveScreenshot(cdp, path.join(job.paths.logs, "submission-unknown-result.png"));
       const error = "提交后未提取到 CNVD 编号，请检查页面结果截图。";
@@ -226,35 +263,65 @@ async function handleLogin(job, cdp, serviceConfig) {
   if (!email || !password) {
     await requestHumanVerification(job, cdp, "human-login-cnvd.png", "CNVD 登录态失效", "cloudflare");
     await waitHumanConfirmation(job);
-    return { ok: true };
+    // Poll to verify login actually succeeded after human input
+    const deadline = Date.now() + 3 * 60_000;
+    while (Date.now() < deadline) {
+      const guard = await checkLoginGuard(cdp);
+      if (guard.hasCreateForm || !guard.isLoginPage) {
+        await appendProgress(job.paths, { stage: "login", status: "done", label: "人工登录已验证", detail: "检测到已离开登录页。" });
+        return { ok: true };
+      }
+      await sleep(5000);
+    }
+    return { ok: false, error: "人工登录超时：3 分钟内未检测到登录成功。" };
   }
 
   await appendProgress(job.paths, { stage: "login", status: "running", label: "填写 CNVD 登录信息", detail: "使用前端传入的账号密码，不读取 skill .env。" });
-  const captcha = await resolveCaptchaCode(job, cdp, "captcha-cnvd-login.png", "登录验证码");
-  const result = await cdp.evaluateFunction((payload) => {
-    const setValue = (selector, value) => {
-      const el = document.querySelector(selector);
-      if (!el) return false;
-      el.value = value;
-      el.dispatchEvent(new Event("input", { bubbles: true }));
-      el.dispatchEvent(new Event("change", { bubbles: true }));
-      return true;
-    };
-    const okEmail = setValue("#email, input[name='email']", payload.email);
-    const okPassword = setValue("#password, input[type='password']", payload.password);
-    const okCode = setValue("#myCode, input[name='myCode']", payload.captcha);
-    const button = Array.from(document.querySelectorAll("a.btn, button, input[type='submit']"))
-      .find((el) => /登录/.test(el.innerText || el.value || ""));
-    if (button) button.click();
-    return { okEmail, okPassword, okCode, clicked: Boolean(button) };
-  }, { email, password, captcha });
-  await sleep(3500);
-  const text = await cdp.evaluate("document.body ? document.body.innerText : ''");
-  if (/Invalid RSA public key|RSA public key/i.test(String(text))) {
-    return { ok: false, error: "CNVD 登录失败：页面返回 Invalid RSA public key。建议先人工登录 Docker Chrome profile 后重新运行。" };
+  const maxCaptchaRetries = 3;
+  for (let attempt = 0; attempt < maxCaptchaRetries; attempt++) {
+    if (attempt > 0) {
+      await appendProgress(job.paths, { stage: "login", status: "running", label: `登录验证码重试 ${attempt}/${maxCaptchaRetries}`, detail: "登录未成功，重新获取验证码。" });
+      await sleep(1000);
+    }
+    const captcha = await resolveCaptchaCode(job, cdp, "captcha-cnvd-login.png", "登录验证码");
+    const result = await cdp.evaluateFunction((payload) => {
+      const setValue = (selector, value) => {
+        const el = document.querySelector(selector);
+        if (!el) return false;
+        el.value = value;
+        el.dispatchEvent(new Event("input", { bubbles: true }));
+        el.dispatchEvent(new Event("change", { bubbles: true }));
+        return true;
+      };
+      const okEmail = setValue("#email, input[name='email']", payload.email);
+      const okPassword = setValue("#password, input[type='password']", payload.password);
+      const okCode = setValue("#myCode, input[name='myCode']", payload.captcha);
+      const button = Array.from(document.querySelectorAll("a.btn, button, input[type='submit']"))
+        .find((el) => /登录/.test(el.innerText || el.value || ""));
+      if (button) button.click();
+      return { okEmail, okPassword, okCode, clicked: Boolean(button) };
+    }, { email, password, captcha });
+    await sleep(3500);
+    const text = await cdp.evaluate("document.body ? document.body.innerText : ''");
+    if (/Invalid RSA public key|RSA public key/i.test(String(text))) {
+      return { ok: false, error: "CNVD 登录失败：页面返回 Invalid RSA public key。建议先人工登录 Docker Chrome profile 后重新运行。" };
+    }
+    const guard = await checkLoginGuard(cdp);
+    if (guard.hasCreateForm || !guard.isLoginPage) {
+      await appendProgress(job.paths, { stage: "login", status: "done", label: "登录成功", detail: `第 ${attempt + 1} 次尝试登录成功。` });
+      return { ok: true };
+    }
+    await writeAdapterLog(job.paths, [`login: attempt ${attempt + 1} still on login page, href=${guard.href}`]);
   }
-  await appendProgress(job.paths, { stage: "login", status: "done", label: "登录动作已提交", detail: JSON.stringify(result) });
-  return { ok: true };
+  // All captcha attempts exhausted — fall back to human
+  await appendProgress(job.paths, { stage: "login", status: "warning", label: "自动登录失败", detail: `${maxCaptchaRetries} 次验证码尝试均未成功，切换人工登录。` });
+  await requestHumanVerification(job, cdp, "human-login-cnvd.png", "CNVD 自动登录失败，请人工登录", "cloudflare");
+  await waitHumanConfirmation(job);
+  const guard = await checkLoginGuard(cdp);
+  if (guard.hasCreateForm || !guard.isLoginPage) {
+    return { ok: true };
+  }
+  return { ok: false, error: "人工登录后仍未进入上报表单。" };
 }
 
 async function handleProtectionCaptcha(job, cdp) {
@@ -437,48 +504,67 @@ async function waitHumanConfirmation(job) {
   });
 }
 
-async function resolveCaptchaCode(job, cdp, filename, label) {
+async function resolveCaptchaCode(job, cdp, filename, label, maxRetries = 2) {
   const imagePath = path.join(job.paths.logs, filename);
-  const captured = await saveCaptchaImage(cdp, imagePath);
-  if (!captured.ok) {
+
+  for (let attempt = 0; attempt <= maxRetries; attempt++) {
+    if (attempt > 0) {
+      await appendProgress(job.paths, {
+        stage: "captcha",
+        status: "running",
+        label: `${label} OCR 重试 ${attempt}/${maxRetries}`,
+        detail: "刷新验证码图片并重新识别。",
+      });
+      await cdp.evaluate(`(() => {
+        const img = document.querySelector('#codeSpan1 img, #codeSpan img, img[src*="/common/myCodeNew"], img[src*="myCode"]');
+        if (img) { img.click(); img.src = img.src.split('?')[0] + '?t=' + Date.now(); }
+      })()`);
+      await sleep(2000);
+    }
+
+    const captured = await saveCaptchaImage(cdp, imagePath);
+    if (!captured.ok) {
+      if (attempt < maxRetries) continue;
+      await appendProgress(job.paths, {
+        stage: "captcha",
+        status: "warning",
+        label: `${label} 截图失败`,
+        detail: captured.reason || "未能截取验证码图片本体，切换前端人工输入。",
+      });
+      await saveScreenshot(cdp, imagePath);
+      return requestCaptchaCode(job, filename, label);
+    }
+
     await appendProgress(job.paths, {
       stage: "captcha",
-      status: "warning",
-      label: `${label} 截图失败`,
-      detail: captured.reason || "未能截取验证码图片本体，切换前端人工输入。",
+      status: "running",
+      label: `${label} OCR 识别`,
+      detail: `已保存验证码图片 logs/${filename}，正在调用 captcha_ocr.py。`,
     });
-    await saveScreenshot(cdp, imagePath);
-    return requestCaptchaCode(job, filename, label);
+    const result = await runPython(SKILL_NAME, ["scripts/captcha_ocr.py", imagePath, "--preprocess", "cnvd"], {
+      timeoutMs: 120_000,
+    });
+    const code = result.stdout.trim().split(/\r?\n/).pop()?.trim() || "";
+    await writeAdapterLog(job.paths, [
+      `${label}: captcha_ocr exit=${result.exitCode} (attempt ${attempt + 1}/${maxRetries + 1})`,
+      result.stderr ? `${label}: captcha_ocr stderr=${result.stderr.trim()}` : "",
+    ].filter(Boolean));
+    if (result.exitCode === 0 && code && !/^ERROR\b/i.test(code)) {
+      await appendProgress(job.paths, {
+        stage: "captcha",
+        status: "done",
+        label: `${label} OCR 已完成`,
+        detail: `captcha_ocr.py 返回 ${code.length} 位验证码。`,
+      });
+      return code;
+    }
   }
 
   await appendProgress(job.paths, {
     stage: "captcha",
-    status: "running",
-    label: `${label} OCR 识别`,
-    detail: `已保存验证码图片 logs/${filename}，正在调用 captcha_ocr.py。`,
-  });
-  const result = await runPython(SKILL_NAME, ["scripts/captcha_ocr.py", imagePath, "--preprocess", "cnvd"], {
-    timeoutMs: 120_000,
-  });
-  const code = result.stdout.trim().split(/\r?\n/).pop()?.trim() || "";
-  await writeAdapterLog(job.paths, [
-    `${label}: captcha_ocr exit=${result.exitCode}`,
-    result.stderr ? `${label}: captcha_ocr stderr=${result.stderr.trim()}` : "",
-  ].filter(Boolean));
-  if (result.exitCode === 0 && code && !/^ERROR\b/i.test(code)) {
-    await appendProgress(job.paths, {
-      stage: "captcha",
-      status: "done",
-      label: `${label} OCR 已完成`,
-      detail: `captcha_ocr.py 返回 ${code.length} 位验证码。`,
-    });
-    return code;
-  }
-  await appendProgress(job.paths, {
-    stage: "captcha",
     status: "warning",
-    label: `${label} OCR 失败`,
-    detail: result.stderr.trim() || result.stdout.trim() || "captcha_ocr.py 未返回有效验证码，切换前端人工输入。",
+    label: `${label} OCR 多次失败`,
+    detail: `${maxRetries + 1} 次 OCR 尝试均未返回有效验证码，切换前端人工输入。`,
   });
   return requestCaptchaCode(job, filename, label);
 }
