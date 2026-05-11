@@ -325,54 +325,66 @@ async function handleLogin(job, cdp, serviceConfig) {
 }
 
 async function handleProtectionCaptcha(job, cdp) {
-  await clearHumanInput(job);
-  await saveScreenshot(cdp, path.join(job.paths.logs, "captcha-cnvd-protection.png"));
-  await appendProgress(job.paths, {
-    stage: "captcha",
-    status: "warning",
-    label: "等待人工防火墙验证码",
-    detail: "CNVD 验证码保护页已截图，请在前端输入计算结果或验证码文本。",
-  });
-  const code = await requestCaptchaCode(job, "captcha-cnvd-protection.png", "防火墙验证码");
-  const result = await cdp.evaluateFunction((value) => {
-    const inputs = Array.from(document.querySelectorAll("input"))
-      .filter((el) => {
-        const type = String(el.getAttribute("type") || "text").toLowerCase();
-        return !["hidden", "submit", "button", "checkbox", "radio", "file"].includes(type);
+  const maxRetries = 3;
+  for (let attempt = 0; attempt <= maxRetries; attempt++) {
+    if (attempt > 0) {
+      await appendProgress(job.paths, {
+        stage: "captcha",
+        status: "warning",
+        label: `防火墙验证码重试 ${attempt}/${maxRetries}`,
+        detail: "之前的验证码错误，请重新输入。",
       });
-    const input = inputs.find((el) => {
-      const box = el.getBoundingClientRect();
-      return box.width > 0 && box.height > 0;
-    }) || inputs[0];
-    if (!input) return { ok: false, reason: "未找到防火墙验证码输入框" };
-    input.value = value;
-    input.dispatchEvent(new Event("input", { bubbles: true }));
-    input.dispatchEvent(new Event("change", { bubbles: true }));
-    const buttons = Array.from(document.querySelectorAll("button, input[type='submit'], a"));
-    const submit = buttons.find((el) => /提交验证码|提交|验证|继续访问/.test(el.innerText || el.value || ""))
-      || buttons.find((el) => {
+    }
+    await clearHumanInput(job);
+    await saveScreenshot(cdp, path.join(job.paths.logs, "captcha-cnvd-protection.png"));
+    await appendProgress(job.paths, {
+      stage: "captcha",
+      status: "warning",
+      label: "等待人工防火墙验证码",
+      detail: `CNVD 验证码保护页已截图，请在前端输入计算结果或验证码文本。${attempt > 0 ? `第 ${attempt + 1} 次尝试` : ""}`,
+    });
+    const code = await requestCaptchaCode(job, "captcha-cnvd-protection.png", "防火墙验证码");
+    const result = await cdp.evaluateFunction((value) => {
+      const inputs = Array.from(document.querySelectorAll("input"))
+        .filter((el) => {
+          const type = String(el.getAttribute("type") || "text").toLowerCase();
+          return !["hidden", "submit", "button", "checkbox", "radio", "file"].includes(type);
+        });
+      const input = inputs.find((el) => {
         const box = el.getBoundingClientRect();
         return box.width > 0 && box.height > 0;
+      }) || inputs[0];
+      if (!input) return { ok: false, reason: "未找到防火墙验证码输入框" };
+      input.value = value;
+      input.dispatchEvent(new Event("input", { bubbles: true }));
+      input.dispatchEvent(new Event("change", { bubbles: true }));
+      const buttons = Array.from(document.querySelectorAll("button, input[type='submit'], a"));
+      const submit = buttons.find((el) => /提交验证码|提交|验证|继续访问/.test(el.innerText || el.value || ""))
+        || buttons.find((el) => {
+          const box = el.getBoundingClientRect();
+          return box.width > 0 && box.height > 0;
+        });
+      if (!submit) return { ok: false, reason: "未找到防火墙验证码提交按钮" };
+      submit.click();
+      return { ok: true };
+    }, code);
+    if (!result?.ok) {
+      if (attempt < maxRetries) continue;
+      return { ok: false, error: result?.reason || "防火墙验证码提交失败" };
+    }
+    await sleep(2500);
+    const guard = await checkLoginGuard(cdp);
+    if (!guard.hasProtectionCaptcha) {
+      await appendProgress(job.paths, {
+        stage: "captcha",
+        status: "done",
+        label: "防火墙验证码已提交",
+        detail: "已通过 CNVD 验证码保护页，继续登录/上报流程。",
       });
-    if (!submit) return { ok: false, reason: "未找到防火墙验证码提交按钮" };
-    submit.click();
-    return { ok: true };
-  }, code);
-  if (!result?.ok) {
-    return { ok: false, error: result?.reason || "防火墙验证码提交失败" };
+      return { ok: true };
+    }
   }
-  await sleep(2500);
-  const guard = await checkLoginGuard(cdp);
-  if (guard.hasProtectionCaptcha) {
-    return { ok: false, error: "防火墙验证码提交后仍停留在验证码保护页，可能验证码错误。" };
-  }
-  await appendProgress(job.paths, {
-    stage: "captcha",
-    status: "done",
-    label: "防火墙验证码已提交",
-    detail: "已通过 CNVD 验证码保护页，继续登录/上报流程。",
-  });
-  return { ok: true };
+  return { ok: false, error: `${maxRetries + 1} 次防火墙验证码尝试均未通过。` };
 }
 
 async function resolveProtectionGuard(job, cdp, formContext, mode) {
