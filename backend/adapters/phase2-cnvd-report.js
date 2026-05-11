@@ -210,7 +210,7 @@ async function runBrowserSubmit(job, contextPath, serviceConfig, mode) {
       } else {
         await appendProgress(job.paths, { stage: "captcha", status: "running", label: "识别提交验证码", detail: "正在截取验证码图片并调用 captcha_ocr.py。" });
       }
-      const code = await resolveCaptchaCode(job, cdp, "captcha-cnvd-submit.png", "提交验证码");
+      const code = await resolveCaptchaCode(job, cdp, "captcha-cnvd-submit.png", "提交验证码", 2, "codeSpan1");
       await appendProgress(job.paths, { stage: "submit", status: "running", label: "提交 CNVD", detail: `验证码已识别，正在提交（第 ${attempt + 1} 次）。` });
       await submitCaptcha(cdp, code);
       await sleep(3500);
@@ -283,7 +283,7 @@ async function handleLogin(job, cdp, serviceConfig) {
       await appendProgress(job.paths, { stage: "login", status: "running", label: `登录验证码重试 ${attempt}/${maxCaptchaRetries}`, detail: "登录未成功，重新获取验证码。" });
       await sleep(1000);
     }
-    const captcha = await resolveCaptchaCode(job, cdp, "captcha-cnvd-login.png", "登录验证码");
+    const captcha = await resolveCaptchaCode(job, cdp, "captcha-cnvd-login.png", "登录验证码", 2, "codeSpan");
     const result = await cdp.evaluateFunction((payload) => {
       const setValue = (selector, value) => {
         const el = document.querySelector(selector);
@@ -416,6 +416,7 @@ async function fillCnvdForm(cdp, formContext) {
       tempWay: setValue(["#tempWay1", "#tempWay", "textarea[name='tempWay']"], payload.temp_solution),
       formalWay: setValue(["#formalWay11", "#formalWay1", "#formalWay", "textarea[name='formalWay']"], payload.formal_solution),
       poc: setValue(["#poc", "#poc1", "textarea[name='poc']"], payload.other_required_default || "见附件"),
+      binaryVersion: setValue(["#binaryVulnerabilityVersion", "#binaryVulnerabilityVersion1"], payload.version),
     };
   }, { ...vendor, ...detail });
 }
@@ -504,7 +505,7 @@ async function waitHumanConfirmation(job) {
   });
 }
 
-async function resolveCaptchaCode(job, cdp, filename, label, maxRetries = 2) {
+async function resolveCaptchaCode(job, cdp, filename, label, maxRetries = 2, captchaId) {
   const imagePath = path.join(job.paths.logs, filename);
 
   for (let attempt = 0; attempt <= maxRetries; attempt++) {
@@ -522,7 +523,7 @@ async function resolveCaptchaCode(job, cdp, filename, label, maxRetries = 2) {
       await sleep(2000);
     }
 
-    const captured = await saveCaptchaImage(cdp, imagePath);
+    const captured = await saveCaptchaImage(cdp, imagePath, captchaId);
     if (!captured.ok) {
       if (attempt < maxRetries) continue;
       await appendProgress(job.paths, {
@@ -607,14 +608,11 @@ async function saveScreenshot(cdp, filePath) {
   await fsp.writeFile(filePath, Buffer.from(result.data, "base64"));
 }
 
-async function saveCaptchaImage(cdp, filePath) {
-  const result = await cdp.evaluate(`(async () => {
-    const selectors = [
-      '#codeSpan1 img',
-      '#codeSpan img',
-      'img[src*="/common/myCodeNew"]',
-      'img[src*="myCode"]'
-    ];
+async function saveCaptchaImage(cdp, filePath, captchaId) {
+  const result = await cdp.evaluate(`(async (captchaId) => {
+    const selectors = captchaId
+      ? ['#' + captchaId, '#' + captchaId + ' img']
+      : ['#codeSpan1', '#codeSpan1 img', '#codeSpan', '#codeSpan img', 'img[src*="/common/myCodeNew"]', 'img[src*="myCode"]'];
     const image = selectors.reduce((found, sel) => found || document.querySelector(sel), null);
     if (!image) return { ok: false, reason: '未找到验证码图片元素' };
     const rawSrc = image.currentSrc || image.src || image.getAttribute('src');
@@ -630,7 +628,7 @@ async function saveCaptchaImage(cdp, filePath) {
       reader.readAsDataURL(blob);
     });
     return { ok: true, src, dataUrl };
-  })()`);
+  })(captchaId)`);
   if (!result?.ok || !result.dataUrl) {
     return result || { ok: false, reason: "验证码图片截取失败" };
   }
