@@ -179,7 +179,7 @@ docker compose -f docker-compose.yml -f docker-compose.server.yml --profile dock
 服务器 `.env` 放在 `/etc/opencode-skills/.env`，项目根目录 `.env` 是软链。当前服务器基础镜像使用：
 
 ```env
-OPENCODE_IMAGE=node:22-bookworm-slim
+OPENCODE_BASE_IMAGE=node:22-bookworm-slim
 SKILLS_HOST_DIR=/opt/opencode-skills/skills
 ```
 

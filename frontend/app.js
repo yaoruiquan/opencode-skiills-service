@@ -16,6 +16,9 @@ const state = {
   events: [],
   humanActions: [],
   humanInput: null,
+  humanDraft: "",
+  humanDraftType: "captcha",
+  humanInputFocused: false,
   activeLog: "stdout",
   pollTimer: null,
 };
@@ -603,12 +606,13 @@ function renderHumanVerification() {
       </div>
       <div class="human-form">
         <select class="human-type" aria-label="人工输入类型">
-          <option value="captcha">验证码</option>
-          <option value="cloudflare">已完成人机验证</option>
+          <option value="captcha" ${state.humanDraftType === "captcha" ? "selected" : ""}>验证码</option>
+          <option value="cloudflare" ${state.humanDraftType === "cloudflare" ? "selected" : ""}>已完成人机验证</option>
         </select>
-        <input class="human-value" type="text" placeholder="输入验证码，或填“已完成”">
+        <input class="human-value" type="text" placeholder="输入验证码，或填已完成" value="${escapeAttribute(state.humanDraft)}" autofocus>
         <button class="human-submit" type="button">提交给任务</button>
       </div>
+      <div class="human-poll-note">输入期间自动刷新已暂停，提交后恢复。</div>
       ${submitted}
     </section>
   `;
@@ -727,7 +731,8 @@ function renderTemplateControls() {
 }
 
 function shouldPoll(job) {
-  return isActiveJob(job);
+  if (!isActiveJob(job)) return false;
+  return !state.humanInputFocused && !state.humanDraft && !hasPendingHumanAction();
 }
 
 function schedulePoll() {
@@ -809,6 +814,18 @@ function bindHumanVerification() {
   const typeInput = panel.querySelector(".human-type");
   const valueInput = panel.querySelector(".human-value");
   const submitBtn = panel.querySelector(".human-submit");
+  const onFocus = () => { state.humanInputFocused = true; };
+  const onBlur = () => { state.humanInputFocused = false; };
+  typeInput?.addEventListener("focus", onFocus);
+  typeInput?.addEventListener("blur", onBlur);
+  valueInput?.addEventListener("focus", onFocus);
+  valueInput?.addEventListener("blur", onBlur);
+  typeInput?.addEventListener("change", () => {
+    state.humanDraftType = typeInput.value;
+  });
+  valueInput?.addEventListener("input", () => {
+    state.humanDraft = valueInput.value;
+  });
   submitBtn?.addEventListener("click", () => guarded(async () => {
     const value = valueInput.value.trim();
     if (!value) throw new Error("请先输入验证码或人工处理结果。");
@@ -817,9 +834,24 @@ function bindHumanVerification() {
       body: JSON.stringify({ type: typeInput.value, value }),
     });
     valueInput.value = "";
+    state.humanDraft = "";
+    state.humanDraftType = typeInput.value;
     await refreshCurrent();
     toast("人工输入已提交给任务");
   }));
+}
+
+function hasPendingHumanAction() {
+  const actions = state.humanActions || [];
+  if (!actions.length) return false;
+  if (!state.humanInput?.createdAt) return true;
+  const latestAction = actions.reduce((max, item) => {
+    const ts = Date.parse(item.updatedAt || "");
+    return Number.isNaN(ts) ? max : Math.max(max, ts);
+  }, 0);
+  const latestInput = Date.parse(state.humanInput.createdAt);
+  if (Number.isNaN(latestAction) || Number.isNaN(latestInput)) return true;
+  return latestAction > latestInput;
 }
 
 async function createJob() {

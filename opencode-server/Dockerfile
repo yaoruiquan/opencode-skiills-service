@@ -1,4 +1,4 @@
-ARG OPENCODE_IMAGE=ghcr.io/anomalyco/opencode:latest
+ARG OPENCODE_IMAGE=node:22-bookworm-slim
 FROM ${OPENCODE_IMAGE}
 ARG OPENCODE_VERSION=1.14.40
 
@@ -42,25 +42,17 @@ RUN set -eux; \
     exit 1; \
   fi
 
-RUN python3 -m pip install --break-system-packages --no-cache-dir \
-      beautifulsoup4 \
-      chardet \
-      markdown \
-      openpyxl \
-      pillow \
-      python-docx \
-      python-dotenv \
-      requests || \
-    python3 -m pip install --no-cache-dir \
-      beautifulsoup4 \
-      chardet \
-      markdown \
-      openpyxl \
-      pillow \
-      python-docx \
-      python-dotenv \
-      requests || \
-    echo "Optional Python dependencies were not installed; install them later if skills need them."
+RUN python3 -m pip install --break-system-packages --no-cache-dir --prefer-binary \
+      beautifulsoup4==4.14.3 \
+      chardet==7.4.3 \
+      ddddocr==1.6.1 \
+      lxml==5.4.0 \
+      markdown==3.10.2 \
+      openpyxl==3.1.5 \
+      pillow==12.2.0 \
+      python-docx==1.2.0 \
+      python-dotenv==1.2.2 \
+      requests==2.33.1
 
 RUN npm config set registry https://registry.npmmirror.com && \
     if ! command -v opencode >/dev/null 2>&1; then \

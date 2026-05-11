@@ -3,7 +3,7 @@ services:
     build:
       context: ./opencode-server
       args:
-        OPENCODE_IMAGE: ${OPENCODE_IMAGE:-ghcr.io/anomalyco/opencode:latest}
+        OPENCODE_IMAGE: ${OPENCODE_BASE_IMAGE:-node:22-bookworm-slim}
     image: opencode-skills-service-opencode:local
     container_name: opencode-skills-server
     env_file:

@@ -8,7 +8,7 @@
 const path = require("node:path");
 const fsp = require("node:fs/promises");
 const { connectToPage } = require("./cdp-client.js");
-const { appendProgress, findMaterialTarget, runPython, readServiceConfig, writeAdapterLog } = require("./runner.js");
+const { appendProgress, findMaterialTarget, pathExists, runPython, readServiceConfig, writeAdapterLog } = require("./runner.js");
 
 const SKILL_NAME = "phase2-cnvd-report";
 const SCRIPT = "scripts/prepare_form_context.py";
@@ -128,14 +128,25 @@ async function runBrowserSubmit(job, contextPath, serviceConfig, mode) {
     await sleep(3500);
 
     const guard = await checkLoginGuard(cdp);
-    if (guard.hasCloudflare) {
+    if (guard.hasProtectionCaptcha) {
+      const resolved = await resolveProtectionGuard(job, cdp, formContext, mode);
+      if (!resolved.ok) return resolved;
+    }
+
+    const afterProtection = await checkLoginGuard(cdp);
+    if (afterProtection.hasCloudflare) {
       await requestHumanVerification(job, cdp, "captcha-cloudflare.png", "Cloudflare 人机验证", "cloudflare");
       await waitHumanConfirmation(job);
       await cdp.send("Page.navigate", { url: "https://www.cnvd.org.cn/flaw/create" });
       await sleep(2500);
     }
 
-    const beforeLogin = await checkLoginGuard(cdp);
+    let beforeLogin = await checkLoginGuard(cdp);
+    if (beforeLogin.hasProtectionCaptcha) {
+      const resolved = await resolveProtectionGuard(job, cdp, formContext, mode);
+      if (!resolved.ok) return resolved;
+      beforeLogin = await checkLoginGuard(cdp);
+    }
     if (beforeLogin.hasCloudflare) {
       const error = "人工确认后仍停留在 Cloudflare 验证页。";
       await writeFailureSummary(job, formContext, error, mode);
@@ -172,9 +183,9 @@ async function runBrowserSubmit(job, contextPath, serviceConfig, mode) {
       return { success: false, error };
     }
 
-    await appendProgress(job.paths, { stage: "captcha", status: "warning", label: "等待人工验证码", detail: "请在前端查看验证码截图并输入验证码。" });
-    const code = await requestCaptchaCode(job, cdp, "captcha-cnvd-submit.png");
-    await appendProgress(job.paths, { stage: "submit", status: "running", label: "提交 CNVD", detail: "已收到人工验证码，正在提交。" });
+    await appendProgress(job.paths, { stage: "captcha", status: "running", label: "识别提交验证码", detail: "正在截取验证码图片并调用 captcha_ocr.py。" });
+    const code = await resolveCaptchaCode(job, cdp, "captcha-cnvd-submit.png", "提交验证码");
+    await appendProgress(job.paths, { stage: "submit", status: "running", label: "提交 CNVD", detail: "验证码已识别，正在提交。" });
     await submitCaptcha(cdp, code);
     await sleep(3500);
 
@@ -219,7 +230,7 @@ async function handleLogin(job, cdp, serviceConfig) {
   }
 
   await appendProgress(job.paths, { stage: "login", status: "running", label: "填写 CNVD 登录信息", detail: "使用前端传入的账号密码，不读取 skill .env。" });
-  const captcha = await requestCaptchaCode(job, cdp, "captcha-cnvd-login.png");
+  const captcha = await resolveCaptchaCode(job, cdp, "captcha-cnvd-login.png", "登录验证码");
   const result = await cdp.evaluateFunction((payload) => {
     const setValue = (selector, value) => {
       const el = document.querySelector(selector);
@@ -243,6 +254,68 @@ async function handleLogin(job, cdp, serviceConfig) {
     return { ok: false, error: "CNVD 登录失败：页面返回 Invalid RSA public key。建议先人工登录 Docker Chrome profile 后重新运行。" };
   }
   await appendProgress(job.paths, { stage: "login", status: "done", label: "登录动作已提交", detail: JSON.stringify(result) });
+  return { ok: true };
+}
+
+async function handleProtectionCaptcha(job, cdp) {
+  await clearHumanInput(job);
+  await saveScreenshot(cdp, path.join(job.paths.logs, "captcha-cnvd-protection.png"));
+  await appendProgress(job.paths, {
+    stage: "captcha",
+    status: "warning",
+    label: "等待人工防火墙验证码",
+    detail: "CNVD 验证码保护页已截图，请在前端输入计算结果或验证码文本。",
+  });
+  const code = await requestCaptchaCode(job, "captcha-cnvd-protection.png", "防火墙验证码");
+  const result = await cdp.evaluateFunction((value) => {
+    const inputs = Array.from(document.querySelectorAll("input"))
+      .filter((el) => {
+        const type = String(el.getAttribute("type") || "text").toLowerCase();
+        return !["hidden", "submit", "button", "checkbox", "radio", "file"].includes(type);
+      });
+    const input = inputs.find((el) => {
+      const box = el.getBoundingClientRect();
+      return box.width > 0 && box.height > 0;
+    }) || inputs[0];
+    if (!input) return { ok: false, reason: "未找到防火墙验证码输入框" };
+    input.value = value;
+    input.dispatchEvent(new Event("input", { bubbles: true }));
+    input.dispatchEvent(new Event("change", { bubbles: true }));
+    const buttons = Array.from(document.querySelectorAll("button, input[type='submit'], a"));
+    const submit = buttons.find((el) => /提交验证码|提交|验证|继续访问/.test(el.innerText || el.value || ""))
+      || buttons.find((el) => {
+        const box = el.getBoundingClientRect();
+        return box.width > 0 && box.height > 0;
+      });
+    if (!submit) return { ok: false, reason: "未找到防火墙验证码提交按钮" };
+    submit.click();
+    return { ok: true };
+  }, code);
+  if (!result?.ok) {
+    return { ok: false, error: result?.reason || "防火墙验证码提交失败" };
+  }
+  await sleep(2500);
+  const guard = await checkLoginGuard(cdp);
+  if (guard.hasProtectionCaptcha) {
+    return { ok: false, error: "防火墙验证码提交后仍停留在验证码保护页，可能验证码错误。" };
+  }
+  await appendProgress(job.paths, {
+    stage: "captcha",
+    status: "done",
+    label: "防火墙验证码已提交",
+    detail: "已通过 CNVD 验证码保护页，继续登录/上报流程。",
+  });
+  return { ok: true };
+}
+
+async function resolveProtectionGuard(job, cdp, formContext, mode) {
+  const protectionResult = await handleProtectionCaptcha(job, cdp);
+  if (!protectionResult.ok) {
+    await writeFailureSummary(job, formContext, protectionResult.error, mode);
+    return { success: false, error: protectionResult.error };
+  }
+  await cdp.send("Page.navigate", { url: "https://www.cnvd.org.cn/flaw/create" });
+  await sleep(2500);
   return { ok: true };
 }
 
@@ -364,13 +437,58 @@ async function waitHumanConfirmation(job) {
   });
 }
 
-async function requestCaptchaCode(job, cdp, filename) {
-  await clearHumanInput(job);
-  await saveScreenshot(cdp, path.join(job.paths.logs, filename));
+async function resolveCaptchaCode(job, cdp, filename, label) {
+  const imagePath = path.join(job.paths.logs, filename);
+  const captured = await saveCaptchaImage(cdp, imagePath);
+  if (!captured.ok) {
+    await appendProgress(job.paths, {
+      stage: "captcha",
+      status: "warning",
+      label: `${label} 截图失败`,
+      detail: captured.reason || "未能截取验证码图片本体，切换前端人工输入。",
+    });
+    await saveScreenshot(cdp, imagePath);
+    return requestCaptchaCode(job, filename, label);
+  }
+
+  await appendProgress(job.paths, {
+    stage: "captcha",
+    status: "running",
+    label: `${label} OCR 识别`,
+    detail: `已保存验证码图片 logs/${filename}，正在调用 captcha_ocr.py。`,
+  });
+  const result = await runPython(SKILL_NAME, ["scripts/captcha_ocr.py", imagePath, "--preprocess", "cnvd"], {
+    timeoutMs: 120_000,
+  });
+  const code = result.stdout.trim().split(/\r?\n/).pop()?.trim() || "";
+  await writeAdapterLog(job.paths, [
+    `${label}: captcha_ocr exit=${result.exitCode}`,
+    result.stderr ? `${label}: captcha_ocr stderr=${result.stderr.trim()}` : "",
+  ].filter(Boolean));
+  if (result.exitCode === 0 && code && !/^ERROR\b/i.test(code)) {
+    await appendProgress(job.paths, {
+      stage: "captcha",
+      status: "done",
+      label: `${label} OCR 已完成`,
+      detail: `captcha_ocr.py 返回 ${code.length} 位验证码。`,
+    });
+    return code;
+  }
   await appendProgress(job.paths, {
     stage: "captcha",
     status: "warning",
-    label: "等待人工验证码",
+    label: `${label} OCR 失败`,
+    detail: result.stderr.trim() || result.stdout.trim() || "captcha_ocr.py 未返回有效验证码，切换前端人工输入。",
+  });
+  return requestCaptchaCode(job, filename, label);
+}
+
+async function requestCaptchaCode(job, filename, label = "验证码") {
+  await clearHumanInput(job);
+  await appendProgress(job.paths, {
+    stage: "captcha",
+    status: "warning",
+    label: `等待人工${label}`,
     detail: `截图已保存至 logs/${filename}，请在前端输入验证码。`,
   });
   const input = await waitForHumanInput(job, 10 * 60_000);
@@ -388,7 +506,7 @@ async function waitForHumanInput(job, timeoutMs) {
   const inputPath = path.join(job.paths.input, "human-input.json");
   const cancelPath = path.join(job.paths.input, "cancel-requested.json");
   while (Date.now() - started < timeoutMs) {
-    if (await exists(cancelPath)) throw new Error("任务已取消");
+    if (await pathExists(cancelPath)) throw new Error("任务已取消");
     try {
       return JSON.parse(await fsp.readFile(inputPath, "utf8"));
     } catch {
@@ -401,6 +519,39 @@ async function waitForHumanInput(job, timeoutMs) {
 async function saveScreenshot(cdp, filePath) {
   const result = await cdp.send("Page.captureScreenshot", { format: "png", fromSurface: true });
   await fsp.writeFile(filePath, Buffer.from(result.data, "base64"));
+}
+
+async function saveCaptchaImage(cdp, filePath) {
+  const result = await cdp.evaluate(`(async () => {
+    const selectors = [
+      '#codeSpan1 img',
+      '#codeSpan img',
+      'img[src*="/common/myCodeNew"]',
+      'img[src*="myCode"]'
+    ];
+    const image = selectors.reduce((found, sel) => found || document.querySelector(sel), null);
+    if (!image) return { ok: false, reason: '未找到验证码图片元素' };
+    const rawSrc = image.currentSrc || image.src || image.getAttribute('src');
+    if (!rawSrc) return { ok: false, reason: '验证码图片没有 src' };
+    const src = new URL(rawSrc, location.href).href;
+    const response = await fetch(src, { credentials: 'include' });
+    if (!response.ok) return { ok: false, reason: '验证码图片请求失败: HTTP ' + response.status, src };
+    const blob = await response.blob();
+    const dataUrl = await new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = () => resolve(reader.result);
+      reader.onerror = () => reject(reader.error);
+      reader.readAsDataURL(blob);
+    });
+    return { ok: true, src, dataUrl };
+  })()`);
+  if (!result?.ok || !result.dataUrl) {
+    return result || { ok: false, reason: "验证码图片截取失败" };
+  }
+  const match = String(result.dataUrl).match(/^data:image\/[a-z0-9.+-]+;base64,(.+)$/i);
+  if (!match) return { ok: false, reason: "验证码图片不是 base64 data URL" };
+  await fsp.writeFile(filePath, Buffer.from(match[1], "base64"));
+  return { ok: true, src: result.src };
 }
 
 async function writeSubmissionResult(job, formContext, platformId) {
@@ -443,9 +594,10 @@ function loginGuardScript() {
     const hasCreateForm = Boolean(document.querySelector('#isEvent1, #title1, #flawAttFile, #subForm'));
     const cloudflarePattern = /cloudflare|cf-chl|turnstile|checking your browser|ray id|人机验证|安全验证|正在验证|验证您是真人/i;
     const hasCloudflare = !hasCreateForm && cloudflarePattern.test(text + ' ' + href);
+    const hasProtectionCaptcha = !hasCreateForm && /本站开启了验证码保护|请输入验证码，以继续访问|提交验证码|验证码保护/.test(text);
     const hasPasswordInput = Boolean(document.querySelector('input[type="password"], input[name*="password"], input[id*="password"], #password'));
-    const isLoginPage = !hasCreateForm && (/login|user\\/login/i.test(href) || hasPasswordInput || /用户登录|会员登录|登录名|密码/.test(text));
-    return { ok: !hasCloudflare && !isLoginPage && hasCreateForm, hasCloudflare, isLoginPage, hasCreateForm, href };
+    const isLoginPage = !hasCreateForm && !hasProtectionCaptcha && (/login|user\\/login/i.test(href) || hasPasswordInput || /用户登录|会员登录|登录名|密码/.test(text));
+    return { ok: !hasCloudflare && !hasProtectionCaptcha && !isLoginPage && hasCreateForm, hasCloudflare, hasProtectionCaptcha, isLoginPage, hasCreateForm, href };
   }`;
 }
 
@@ -510,15 +662,6 @@ function isOpenNoScript() {
     });
     return { ok: yes.every((r) => !r.checked) && no.every((r) => r.checked), yesCount: yes.length, noCount: no.length };
   }`;
-}
-
-async function exists(target) {
-  try {
-    await fsp.access(target);
-    return true;
-  } catch {
-    return false;
-  }
 }
 
 function sleep(ms) {

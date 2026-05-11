@@ -185,6 +185,7 @@ module.exports = {
   SKILL_ROOT,
   getAdapter,
   findMaterialTarget,
+  pathExists,
   readServiceConfig,
   runPython,
   appendProgress,
