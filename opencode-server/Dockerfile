@@ -22,6 +22,7 @@ RUN set -eux; \
       python3 \
       python3-pip \
       python3-venv \
+      ripgrep \
       zip \
       unzip; \
     rm -rf /var/lib/apt/lists/*; \
@@ -35,6 +36,7 @@ RUN set -eux; \
       python3 \
       py3-pip \
       py3-pillow \
+      ripgrep \
       zip \
       unzip; \
   else \
