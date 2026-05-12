@@ -1,0 +1,17 @@
+# Development Dockerfile with hot reload
+FROM node:22-bookworm-slim
+
+WORKDIR /app
+
+# Copy package files
+COPY package.json ./
+
+# Install dependencies
+RUN npm install
+
+# Copy source code
+COPY . .
+
+EXPOSE 4101
+
+CMD ["npm", "run", "dev"]

@@ -27,12 +27,20 @@
 opencode-skills-service/
 ├── backend/                 # skills-api: HTTP 路由、模板、prompt、job 管理
 │   ├── server.js
+│   ├── templates.js
+│   ├── executor.js
+│   ├── output.js
+│   ├── human-input.js
+│   ├── jobs-crud.js
+│   ├── push.js
+│   ├── adapters/            # legacy deterministic adapter，可选启用
 │   └── server.test.js
-├── frontend/                # 中文任务控制台（纯静态，无构建）
+├── frontend/                # Vue 3 + Vite 中文任务控制台
 │   ├── index.html
-│   ├── app.js
-│   ├── styles.css
-│   └── server.js
+│   ├── src/
+│   ├── nginx.conf
+│   ├── Dockerfile
+│   └── package.json
 ├── opencode-server/         # OpenCode 运行镜像 + 启动脚本
 ├── browser-service/         # Docker Chrome 镜像 + nginx 代理
 ├── config/                  # OpenCode 配置模板（.env 渲染）
@@ -73,6 +81,29 @@ docker compose --profile docker-browser up -d --build
 | GET | `/jobs/{id}/logs` | 运行日志 |
 | GET | `/jobs/{id}/outputs` | 输出文件列表 |
 | GET | `/jobs/{id}/outputs/{path}` | 下载输出文件 |
+
+## 执行路径
+
+默认执行路径已经收敛为：
+
+```text
+Frontend -> skills-api -> OpenCode Server -> skill -> Docker Chrome
+```
+
+`skills-api` 默认不走 deterministic adapter。adapter 只作为 legacy fallback 保留，只有显式设置下面环境变量才会启用：
+
+```env
+SKILLS_API_USE_ADAPTERS=true
+```
+
+服务健康检查会返回当前模式：
+
+```bash
+curl -sS http://127.0.0.1:4100/health
+# executionMode: "opencode-skills"
+```
+
+上报类任务以 `output/submission-result.json` 为最高优先级成功证据。只要该文件包含成功状态和平台编号，即使原始 job 后续被中断或失败覆盖，API 和前端也会显示“平台已提交”。
 
 ```bash
 # 完整流程

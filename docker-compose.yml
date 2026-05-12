@@ -71,20 +71,37 @@ services:
       - /app/server.js
 
   frontend:
-    image: opencode-skills-service-opencode:local
+    build:
+      context: ./frontend
+    image: opencode-skills-service-frontend:local
     container_name: opencode-skills-frontend
+    depends_on:
+      - skills-api
+    ports:
+      - "127.0.0.1:4101:80"
+
+  # Vue development server (optional, use for hot reload during development)
+  frontend-dev:
+    profiles:
+      - dev
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile.dev
+    container_name: opencode-skills-frontend-dev
     depends_on:
       - skills-api
     ports:
       - "127.0.0.1:4101:4101"
     environment:
-      NODE_ENV: production
-      FRONTEND_PORT: "4101"
+      NODE_ENV: development
+      VITE_API_BASE_URL: http://skills-api:4100
     volumes:
-      - ./frontend:/app:ro
+      - ./frontend/src:/app/src
+      - ./frontend/public:/app/public
     entrypoint:
-      - node
-      - /app/server.js
+      - npm
+      - run
+      - dev
 
   browser-cnvd:
     profiles:

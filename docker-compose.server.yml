@@ -20,9 +20,7 @@ services:
 
   frontend:
     ports: !override
-      - "4101:4101"
-    volumes:
-      - ./frontend:/app:ro,Z
+      - "4101:80"
 
   browser-cnvd:
     ports: !override

@@ -141,6 +141,20 @@ test("complexSkillPrompt uses job paths and mode options", async () => {
   assert.match(prompt, /final\.docx/);
 });
 
+test("submission prompt includes service contract and state machine", async () => {
+  const job = await createJob({ template: "phase2-cnvd-report" });
+  const prompt = complexSkillPrompt(
+    job,
+    "phase2-cnvd-report",
+    { options: { mode: "single", serviceConfig: { submit: true } } },
+  );
+
+  assert.match(prompt, /服务化执行契约/);
+  assert.match(prompt, /prepare -> form_context -> browser -> login/);
+  assert.match(prompt, /禁止重写、覆盖或伪造 input\/service-config\.json/);
+  assert.match(prompt, /CNVD 防火墙\/WAF 访问验证码走前端人工/);
+});
+
 test("msrc template keeps report workflow inside job paths", async () => {
   const job = await createJob({ template: "msrc-vulnerability-report" });
   await fs.mkdir(path.join(job.paths.input, "materials", "2026-05"), { recursive: true });
@@ -274,6 +288,25 @@ test("submit=true submission templates require submission result", async () => {
   );
 
   await fs.writeFile(path.join(job.paths.output, "submission-result.json"), "{\"submitted\":true}\n", "utf8");
+  await assert.doesNotReject(() => validateRequiredOutputs(job, "phase2-cnvd-report", "single"));
+});
+
+test("successful submission result wins over missing summary outputs", async () => {
+  const job = await createJob({ template: "phase2-cnvd-report" });
+  job.run = {
+    template: "phase2-cnvd-report",
+    options: { mode: "single", serviceConfig: { submit: true } },
+  };
+  await fs.writeFile(
+    path.join(job.paths.output, "submission-result.json"),
+    JSON.stringify({
+      status: "success",
+      cnvd_id: "CNVD-C-2026-213629",
+      submission_url: "https://www.cnvd.org.cn/user/reportManage/28813516",
+    }) + "\n",
+    "utf8",
+  );
+
   await assert.doesNotReject(() => validateRequiredOutputs(job, "phase2-cnvd-report", "single"));
 });
 
