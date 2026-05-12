@@ -4,15 +4,28 @@ import type { ConfigField } from '../types'
 
 export const useConfigStore = defineStore('config', () => {
   function defaultApiBase() {
-    if (typeof window === 'undefined') return 'http://127.0.0.1:4100'
-    const { protocol, hostname } = window.location
-    if (!hostname || hostname === 'localhost' || hostname === '127.0.0.1') {
-      return 'http://127.0.0.1:4100'
-    }
-    return `${protocol}//${hostname}:4100`
+    return '/api'
   }
 
-  const apiBase = ref(localStorage.getItem('skillsApiBase') || defaultApiBase())
+  function shouldReplaceStoredApiBase(value: string | null) {
+    if (!value || value === '/api' || typeof window === 'undefined') return !value
+    const { hostname } = window.location
+    if (!hostname || hostname === 'localhost' || hostname === '127.0.0.1') return false
+
+    try {
+      const url = new URL(value, window.location.origin)
+      return (
+        url.hostname === 'localhost' ||
+        url.hostname === '127.0.0.1' ||
+        (url.hostname === hostname && url.port === '4100')
+      )
+    } catch {
+      return false
+    }
+  }
+
+  const storedApiBase = typeof window === 'undefined' ? null : localStorage.getItem('skillsApiBase')
+  const apiBase = ref(shouldReplaceStoredApiBase(storedApiBase) ? defaultApiBase() : storedApiBase!)
   const currentTemplate = ref('')
   const templateConfig = ref<Record<string, any>>({})
   const serviceConfig = ref('{}')
