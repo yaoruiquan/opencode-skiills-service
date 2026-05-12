@@ -1,6 +1,7 @@
 const http = require("node:http");
 const fsp = require("node:fs/promises");
 const path = require("node:path");
+const { spawn } = require("node:child_process");
 
 const PORT = Number(process.env.SKILLS_API_PORT || 4100);
 const HOST = process.env.SKILLS_API_HOST || "0.0.0.0";
@@ -890,8 +891,21 @@ async function cancelJobHandler(job) {
   if (active) {
     stopActiveChild(active);
     ACTIVE_RUNS.delete(job.id);
+  } else {
+    await stopOrphanedOpenCodeRuns(job.id);
   }
   startPush(job.id).catch(() => {});
+}
+
+async function stopOrphanedOpenCodeRuns(jobId) {
+  if (!/^job_[a-zA-Z0-9_-]+$/.test(jobId)) return;
+  await new Promise((resolve) => {
+    const child = spawn("pkill", ["-TERM", "-f", `opencode run .*${jobId}`], {
+      stdio: "ignore",
+    });
+    child.on("error", () => resolve());
+    child.on("close", () => resolve());
+  });
 }
 
 // ── API Routes ─────────────────────────────────────────────────────────────

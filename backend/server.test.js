@@ -358,13 +358,16 @@ test("log redaction masks common secrets before returning logs", () => {
     "PASSWORD=example-password",
     "WEBHOOK=https://example.invalid/robot/send?access_token=abc123",
     JSON.stringify({ password: "secret-pass", value: "user@example.com" }),
+    JSON.stringify({ output: '{\\"cnvd_email\\": \\"cnvd@example.com\\", \\"cnvd_password\\": \\"12345678\\"}' }),
   ].join("\n");
   const redacted = redactSensitiveText(raw);
 
   assert.doesNotMatch(redacted, /user@example.com/);
+  assert.doesNotMatch(redacted, /cnvd@example.com/);
   assert.doesNotMatch(redacted, /example-password/);
   assert.doesNotMatch(redacted, /access_token=abc123/);
   assert.doesNotMatch(redacted, /secret-pass/);
+  assert.doesNotMatch(redacted, /12345678/);
   assert.match(redacted, /\[REDACTED/);
 });
 

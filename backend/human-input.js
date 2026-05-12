@@ -7,6 +7,22 @@ const path = require("node:path");
 const fsp = require("node:fs/promises");
 
 const HUMAN_INPUT_FILE = "human-input.json";
+const SENSITIVE_KEYS = [
+  "password",
+  "cnvd_password",
+  "cnvd_email",
+  "cnnvd_password",
+  "cnnvd_email",
+  "cnnvd_username",
+  "ncc_password",
+  "ncc_username",
+  "ncc_email",
+  "platform_username",
+  "platform_password",
+  "report_upload_password",
+  "dingtalk_webhook",
+  "dingtalk_secret",
+];
 
 function maskHumanInputValue(value) {
   if (!value) return "";
@@ -16,21 +32,33 @@ function maskHumanInputValue(value) {
 }
 
 function redactSensitiveText(value = "") {
-  return String(value)
+  let text = String(value)
     .replace(/[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/gi, "[REDACTED_EMAIL]")
     .replace(/([?&]access_token=)[^&\s"']+/gi, "$1[REDACTED_TOKEN]")
     .replace(/\b(PASSWORD|TOKEN|SECRET|WEBHOOK)\s*=\s*[^\s]+/gi, (match) => {
       const [key] = match.split("=");
       return `${key}=*****`;
     })
-    .replace(/["']?password["']?\s*[:=]\s*["'][^"']+["']/gi, (match) => {
-      const prefix = match.match(/^["']?password["']?\s*[:=]\s*["']?/i)?.[0] || "";
-      return `${prefix}*****"`;
-    })
-    .replace(/["']?(cnvd_password|cnvd_email|cnnvd_password|cnnvd_email|cnnvd_username|ncc_password|ncc_username|ncc_email|platform_username|platform_password|report_upload_password|dingtalk_webhook|dingtalk_secret)["']?\s*[:=]\s*["'][^"']+["']/gi, (match) => {
-      const prefix = match.match(/^["']?[^"']*["']?\s*[:=]\s*["']?/i)?.[0] || "";
-      return `${prefix}*****"`;
-    });
+    .replace(/\b(password|token|secret|webhook)\b\s*[:=]\s*[^\s,}]+/gi, "$1=*****");
+
+  for (const key of SENSITIVE_KEYS) {
+    text = redactPlainJsonValue(text, key);
+    text = redactEscapedJsonValue(text, key);
+  }
+  return text;
+}
+
+function redactPlainJsonValue(text, key) {
+  const pattern = new RegExp(`(["']?${key}["']?\\s*[:=]\\s*)(["'])[^"']*\\2`, "gi");
+  return text.replace(pattern, (_match, prefix, quote) => `${prefix}${quote}*****${quote}`);
+}
+
+function redactEscapedJsonValue(text, key) {
+  const onceEscaped = new RegExp(`(\\\\?"${key}\\\\?"\\s*[:=]\\s*\\\\?")[^"\\\\]*(\\\\?")`, "gi");
+  const multiEscaped = new RegExp(`(\\\\+"${key}\\\\+"\\s*[:=]\\s*\\\\+")[^"\\\\]*(\\\\+")`, "gi");
+  return text
+    .replace(onceEscaped, "$1*****$2")
+    .replace(multiEscaped, "$1*****$2");
 }
 
 async function readHumanInput(job) {
