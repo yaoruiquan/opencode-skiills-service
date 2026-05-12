@@ -64,6 +64,19 @@ export function useSSE(jobId: string | (() => string)) {
         }
       })
 
+      eventSource.addEventListener('push', (event) => {
+        try {
+          const data = JSON.parse(event.data)
+          events.value.push({
+            type: 'push',
+            data,
+            timestamp: Date.now()
+          })
+        } catch {
+          // Handle parse error
+        }
+      })
+
       eventSource.addEventListener('warning', (event) => {
         try {
           const data = JSON.parse(event.data)

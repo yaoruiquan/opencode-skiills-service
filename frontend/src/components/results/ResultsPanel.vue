@@ -1,6 +1,7 @@
 <script setup lang="ts">
-import { ref, computed } from 'vue'
+import { ref, computed, watch } from 'vue'
 import { useJobStore } from '../../stores/jobStore'
+import { useSSE } from '../../composables/useSSE'
 import OutputFiles from './OutputFiles.vue'
 import LogViewer from './LogViewer.vue'
 import ExecutionTimeline from './ExecutionTimeline.vue'
@@ -11,6 +12,29 @@ const activeTab = ref<'events' | 'outputs' | 'logs'>('events')
 
 const currentJob = computed(() => jobStore.currentJob)
 const hasJob = computed(() => !!currentJob.value)
+const currentJobId = computed(() => currentJob.value?.id || '')
+const failureReason = computed(() => {
+  const job = currentJob.value
+  if (!job || !['failed', 'canceled'].includes(job.status)) return ''
+  return job.run?.error || job.logs?.stderr?.split('\n').filter(Boolean).slice(-1)[0] || ''
+})
+const { events: pushEvents, connectionStatus } = useSSE(() => currentJobId.value)
+
+watch(
+  pushEvents,
+  (items) => {
+    const latest = items[items.length - 1]
+    if (!latest || latest.type !== 'push' || !latest.data?.jobId) return
+    jobStore.patchCurrentJob(latest.data.jobId, {
+      status: latest.data.status,
+      run: latest.data.run,
+      logs: latest.data.logs,
+      events: latest.data.events,
+      outputs: latest.data.outputs || currentJob.value?.outputs,
+    })
+  },
+  { deep: true }
+)
 </script>
 
 <template>
@@ -22,6 +46,9 @@ const hasJob = computed(() => !!currentJob.value)
       </div>
 
       <div class="flex items-center gap-4">
+        <span class="stream-status" :class="`is-${connectionStatus}`">
+          {{ connectionStatus === 'connected' ? '实时连接' : connectionStatus === 'connecting' ? '连接中' : connectionStatus === 'error' ? '连接异常' : '未连接' }}
+        </span>
         <div class="segmented-control">
           <button
             :class="{ 'is-active': activeTab === 'events' }"
@@ -73,6 +100,10 @@ const hasJob = computed(() => !!currentJob.value)
     </div>
 
     <div class="results-content">
+      <div v-if="failureReason" class="failure-reason">
+        <strong>{{ currentJob?.status === 'canceled' ? '中断原因' : '失败原因' }}</strong>
+        <span>{{ failureReason }}</span>
+      </div>
       <ExecutionTimeline v-if="activeTab === 'events'" />
       <OutputFiles v-if="activeTab === 'outputs'" />
       <LogViewer v-if="activeTab === 'logs'" />
@@ -104,6 +135,22 @@ const hasJob = computed(() => !!currentJob.value)
   @apply p-2 rounded-lg text-slate-400 hover:text-blue-600 hover:bg-blue-50 transition-colors cursor-pointer border border-transparent hover:border-blue-100;
 }
 
+.stream-status {
+  @apply hidden rounded-full px-2.5 py-1 text-xs font-semibold md:inline-flex;
+  color: var(--ink-muted);
+  background: var(--surface-muted);
+}
+
+.stream-status.is-connected {
+  color: var(--success);
+  background: rgba(5, 150, 105, 0.08);
+}
+
+.stream-status.is-error {
+  color: var(--danger);
+  background: rgba(220, 38, 38, 0.08);
+}
+
 .segmented-control {
   @apply inline-flex rounded-lg p-1 bg-slate-100 border border-slate-200/50;
 }
@@ -123,5 +170,17 @@ const hasJob = computed(() => !!currentJob.value)
 
 .results-content {
   @apply min-h-[300px];
+}
+
+.failure-reason {
+  @apply mb-4 flex flex-col gap-1 rounded-lg border p-3 text-sm;
+  color: var(--danger);
+  border-color: rgba(220, 38, 38, 0.24);
+  background: rgba(220, 38, 38, 0.06);
+}
+
+.failure-reason span {
+  @apply break-words;
+  color: var(--ink-muted);
 }
 </style>

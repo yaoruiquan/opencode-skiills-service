@@ -4,6 +4,7 @@
  */
 
 const { isSubmitRun } = require("./jobs-crud.js");
+const fsp = require("node:fs/promises");
 
 const clients = new Map();
 let clientsCounter = 0;
@@ -20,7 +21,7 @@ function push(jobId, event, data) {
   }
 }
 
-async function startPush(jobId, { readJob, readLogs, parseExecutionEvents, listFiles, parseProgressEvents, groupOutputFilesByTemplate, validateRequiredOutputs, TEMPLATES }) {
+async function startPush(jobId, { readJob, readLogs, readProgress, parseExecutionEvents, listFiles, groupOutputFilesByTemplate, validateRequiredOutputs, TEMPLATES }) {
   push(jobId, "push", { status: "started", jobId });
 
   let job;
@@ -32,13 +33,14 @@ async function startPush(jobId, { readJob, readLogs, parseExecutionEvents, listF
   }
 
   // Initial push with job state
-  const detail = executionDetail(job, await readLogs(job));
+  const detail = await executionDetail(job, await readLogs(job), readProgress);
   push(jobId, "push", { status: "info", jobId, ...detail });
 
   // Poll for changes
   const deadlineMs = 30 * 60_000;
   const started = Date.now();
   let lastUpdated = job.updatedAt;
+  let lastSignature = detailSignature(detail);
 
   while (Date.now() - started < deadlineMs) {
     await sleep(3000);
@@ -49,16 +51,18 @@ async function startPush(jobId, { readJob, readLogs, parseExecutionEvents, listF
       return;
     }
 
-    if (job.updatedAt === lastUpdated) continue;
+    const logs = await readLogs(job);
+    const currentDetail = await executionDetail(job, logs, readProgress);
+    const currentSignature = detailSignature(currentDetail);
+    if (job.updatedAt === lastUpdated && currentSignature === lastSignature) continue;
     lastUpdated = job.updatedAt;
+    lastSignature = currentSignature;
 
     const terminalStates = ["completed", "failed", "canceled"];
     const isTerminal = terminalStates.includes(job.status);
-    const logs = await readLogs(job);
 
     if (isTerminal) {
       // Final push with all data
-      const finalDetail = executionDetail(job, logs);
       const outputs = await listFiles(job.paths.output);
       const template = job.template || "custom";
       const outputGroups = groupOutputFilesByTemplate(outputs, TEMPLATES[template]?.outputGroups);
@@ -72,7 +76,7 @@ async function startPush(jobId, { readJob, readLogs, parseExecutionEvents, listF
       push(jobId, "push", {
         status: job.status,
         jobId,
-        ...finalDetail,
+        ...currentDetail,
         outputs,
         outputGroups,
         validation,
@@ -87,22 +91,25 @@ async function startPush(jobId, { readJob, readLogs, parseExecutionEvents, listF
       return;
     }
 
-    push(jobId, "push", { status: "info", jobId, ...executionDetail(job, logs) });
+    push(jobId, "push", { status: "info", jobId, ...currentDetail });
   }
 
   // Timeout
   push(jobId, "push", { status: "done", jobId });
 }
 
-function executionDetail(job, logs) {
+async function executionDetail(job, logs, readProgress) {
   const latestRun = job.run;
+  const progress = readProgress ? await readProgress(job).catch(() => "") : "";
+  const stdout = latestRun?.stdout ? await fsp.readFile(latestRun.stdout, "utf8").catch(() => "") : "";
+  const stderr = latestRun?.stderr ? await fsp.readFile(latestRun.stderr, "utf8").catch(() => "") : "";
   const events = latestRun
     ? parseExecutionEvents(
-        latestRun.stdout || "",
-        latestRun.stderr || "",
+        stdout,
+        stderr,
         latestRun.adapter ? "adapter" : "",
         job,
-        job.paths.logs,
+        progress,
       )
     : [];
   return {
@@ -111,6 +118,20 @@ function executionDetail(job, logs) {
     logs,
     events,
   };
+}
+
+function detailSignature(detail) {
+  const events = detail.events || [];
+  const lastEvent = events[events.length - 1] || {};
+  return [
+    detail.status || "",
+    events.length,
+    lastEvent.time || "",
+    lastEvent.stage || "",
+    lastEvent.status || "",
+    lastEvent.label || "",
+    detail.logs?.length || 0,
+  ].join("\u0000");
 }
 
 function subscribe(jobId, res) {

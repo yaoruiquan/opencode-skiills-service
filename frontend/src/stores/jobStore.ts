@@ -134,6 +134,17 @@ export const useJobStore = defineStore('job', () => {
     applyFilters()
   }
 
+  function patchCurrentJob(jobId: string, patch: Partial<Job>) {
+    if (currentJob.value?.id === jobId) {
+      currentJob.value = { ...currentJob.value, ...patch }
+    }
+    const index = jobs.value.findIndex((item) => item.id === jobId)
+    if (index >= 0) {
+      jobs.value[index] = { ...jobs.value[index], ...patch }
+      applyFilters()
+    }
+  }
+
   function clearError() {
     error.value = null
   }
@@ -154,6 +165,7 @@ export const useJobStore = defineStore('job', () => {
     runJob,
     cancelJob,
     deleteJob,
+    patchCurrentJob,
     filterJobs,
     clearError
   }

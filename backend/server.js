@@ -48,6 +48,7 @@ function startPush(jobId) {
   return pushModule.startPush(jobId, {
     readJob,
     readLogs: (job) => readLogs(job),
+    readProgress,
     parseExecutionEvents,
     listFiles,
     parseProgressEvents,
@@ -252,6 +253,27 @@ async function outputFilesForJob(job) {
       group: group?.label || "其他文件",
     };
   });
+}
+
+async function createOutputArchive(job) {
+  const files = await listFiles(job.paths.output);
+  if (!files.length) throw new Error("no output files to archive");
+
+  const archivePath = path.join(job.paths.logs, `${job.id}-outputs.zip`);
+  await new Promise((resolve, reject) => {
+    const child = spawn("zip", ["-qr", archivePath, "."], {
+      cwd: job.paths.output,
+      stdio: ["ignore", "ignore", "pipe"],
+    });
+    let stderr = "";
+    child.stderr.on("data", (chunk) => { stderr += chunk.toString("utf8"); });
+    child.on("error", reject);
+    child.on("close", (code) => {
+      if (code === 0) resolve();
+      else reject(new Error(stderr.trim() || `zip exited with code ${code}`));
+    });
+  });
+  return fsp.readFile(archivePath);
 }
 
 function parseExecutionEvents(stdout = "", stderr = "", adapter = "", job = {}, progress = "") {
@@ -1069,6 +1091,19 @@ async function route(req, res) {
         const target = safeJoin(job.paths.output, relativePath);
         const data = await fsp.readFile(target);
         return binary(res, 200, data, contentTypeFor(target));
+      }
+
+      // GET /jobs/:id/archive
+      if (req.method === "GET" && parts.length === 3 && parts[2] === "archive") {
+        const job = await readJob(jobId);
+        const archive = await createOutputArchive(job);
+        res.writeHead(200, {
+          "Content-Type": "application/zip",
+          "Content-Length": archive.length,
+          "Content-Disposition": contentDispositionAttachment(`${job.id}-outputs.zip`),
+        });
+        res.end(archive);
+        return;
       }
 
       // POST /jobs/:id/write-output

@@ -49,6 +49,8 @@ function getOutputUrl(filePath: string) {
   if (!currentJob.value) return '#'
   return api.outputUrl(currentJob.value.id, filePath)
 }
+
+const archiveUrl = computed(() => (currentJob.value ? api.archiveUrl(currentJob.value.id) : '#'))
 </script>
 
 <template>
@@ -59,6 +61,10 @@ function getOutputUrl(filePath: string) {
         <strong>{{ platformId }}</strong>
       </div>
       <a v-if="submissionUrl" :href="submissionUrl" target="_blank">查看平台记录</a>
+    </div>
+
+    <div v-if="outputs.length" class="output-toolbar">
+      <a :href="archiveUrl" target="_blank">下载全部输出</a>
     </div>
 
     <div v-if="outputs.length === 0" class="empty">暂无输出文件</div>
@@ -110,6 +116,20 @@ function getOutputUrl(filePath: string) {
   @apply rounded-lg border py-8 text-center text-sm;
   border-color: var(--line);
   color: var(--ink-muted);
+  background: var(--surface-muted);
+}
+
+.output-toolbar {
+  @apply flex justify-end;
+}
+
+.output-toolbar a {
+  @apply rounded-lg border px-3 py-1.5 text-sm font-semibold transition-colors;
+  border-color: var(--line);
+  color: var(--brand);
+}
+
+.output-toolbar a:hover {
   background: var(--surface-muted);
 }
 

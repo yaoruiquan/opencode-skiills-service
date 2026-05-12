@@ -57,6 +57,10 @@ export function useApi() {
     return `${configStore.apiBase}/jobs/${jobId}/logs/${encodeURIComponent(logFile)}`
   }
 
+  function archiveUrl(jobId: string) {
+    return `${configStore.apiBase}/jobs/${jobId}/archive`
+  }
+
   return {
     request,
     get,
@@ -64,6 +68,7 @@ export function useApi() {
     put,
     del,
     outputUrl,
-    logUrl
+    logUrl,
+    archiveUrl
   }
 }
