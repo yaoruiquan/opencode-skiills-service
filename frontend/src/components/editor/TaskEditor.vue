@@ -12,7 +12,7 @@ const configStore = useConfigStore()
 const api = useApi()
 
 const selectedTemplate = ref('md2wechat')
-const jobTitle = ref('公众号转换前端验证')
+const jobTitle = ref('')
 const markdown = ref('')
 const prompt = ref('')
 const markdownFile = ref<File | null>(null)
@@ -22,7 +22,7 @@ const isRunning = ref(false)
 const isSaving = ref(false)
 const taskBrief = ref('')
 const mode = ref('')
-const lastAutoTitle = ref(jobTitle.value)
+const lastAutoTitle = ref('')
 
 const currentTemplate = computed(() => jobStore.templates[selectedTemplate.value])
 
@@ -133,7 +133,14 @@ async function readBase64(file: File) {
 }
 
 async function ensureJob() {
-  if (!jobStore.currentJob || jobStore.currentJob.template !== selectedTemplate.value) {
+  const current = jobStore.currentJob
+  const shouldCreate =
+    !current ||
+    current.template !== selectedTemplate.value ||
+    current.status !== 'created' ||
+    current.title !== jobTitle.value
+
+  if (shouldCreate) {
     await createJob()
   }
   return jobStore.currentJob

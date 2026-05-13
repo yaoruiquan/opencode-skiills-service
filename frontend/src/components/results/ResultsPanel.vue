@@ -19,19 +19,28 @@ const failureReason = computed(() => {
   return job.run?.error || job.logs?.stderr?.split('\n').filter(Boolean).slice(-1)[0] || ''
 })
 const { events: pushEvents, connectionStatus } = useSSE(() => currentJobId.value)
+const jobStatuses = new Set(['created', 'running', 'completed', 'failed', 'canceled'])
+
+function pushPatch(data: any) {
+  const patch: Record<string, any> = {}
+  if (jobStatuses.has(data.status)) patch.status = data.status
+  if (data.run) patch.run = data.run
+  if (data.logs) patch.logs = data.logs
+  if (Array.isArray(data.events)) patch.events = data.events
+  if (data.outputs) patch.outputs = data.outputs
+  if (data.outputGroups) patch.outputGroups = data.outputGroups
+  if (data.validation) patch.validation = data.validation
+  return patch
+}
 
 watch(
   pushEvents,
   (items) => {
     const latest = items[items.length - 1]
     if (!latest || latest.type !== 'push' || !latest.data?.jobId) return
-    jobStore.patchCurrentJob(latest.data.jobId, {
-      status: latest.data.status,
-      run: latest.data.run,
-      logs: latest.data.logs,
-      events: latest.data.events,
-      outputs: latest.data.outputs || currentJob.value?.outputs,
-    })
+    const patch = pushPatch(latest.data)
+    if (Object.keys(patch).length === 0) return
+    jobStore.patchCurrentJob(latest.data.jobId, patch)
   },
   { deep: true }
 )
