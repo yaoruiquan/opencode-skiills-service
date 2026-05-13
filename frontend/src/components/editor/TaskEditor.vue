@@ -20,6 +20,8 @@ const materialFiles = ref<File[]>([])
 const isCreating = ref(false)
 const isRunning = ref(false)
 const isSaving = ref(false)
+const uploadProgress = ref('')
+const uploadError = ref('')
 const taskBrief = ref('')
 const mode = ref('')
 const lastAutoTitle = ref('')
@@ -30,6 +32,26 @@ const hasMaterials = computed(() => {
   const inputMode = currentTemplate.value?.inputMode
   return inputMode === 'materials' || inputMode === 'directory' || inputMode === 'directory-zip'
 })
+
+const uploadedMaterialFiles = computed(() =>
+  (jobStore.currentJob?.files || [])
+    .filter((file) => file.path.startsWith('materials/') && !file.path.endsWith('/.DS_Store'))
+    .sort((a, b) => a.path.localeCompare(b.path, 'zh-CN'))
+)
+
+function isIgnoredMaterial(file: File) {
+  const relative = (file as any).webkitRelativePath || file.name
+  const name = relative.split('/').pop() || file.name
+  return name === '.DS_Store' || name === 'Thumbs.db' || file.size === 0
+}
+
+const ignoredSelectedCount = computed(
+  () => materialFiles.value.filter((file) => isIgnoredMaterial(file)).length
+)
+
+const validSelectedMaterials = computed(() =>
+  materialFiles.value.filter((file) => !isIgnoredMaterial(file))
+)
 
 const runButtonLabel = computed(() => {
   if (isRunning.value) return '运行中...'
@@ -71,6 +93,8 @@ watch(selectedTemplate, (template) => {
   // Clear state when switching
   markdownFile.value = null
   materialFiles.value = []
+  uploadProgress.value = ''
+  uploadError.value = ''
   taskBrief.value = ''
 })
 
@@ -117,7 +141,18 @@ function onMarkdownFile(event: Event) {
 
 function onMaterialFiles(event: Event) {
   const input = event.target as HTMLInputElement
-  materialFiles.value = [...materialFiles.value, ...Array.from(input.files || [])]
+  uploadError.value = ''
+  const merged = [...materialFiles.value, ...Array.from(input.files || [])]
+  const deduped = new Map<string, File>()
+  for (const file of merged) {
+    const relative = (file as any).webkitRelativePath || file.name
+    deduped.set(relative, file)
+  }
+  materialFiles.value = Array.from(deduped.values())
+  if (materialFiles.value.length > 0 && validSelectedMaterials.value.length === 0) {
+    uploadError.value = '选择的目录里没有有效材料，请确认包含 docx、zip、pdf 或图片文件。'
+  }
+  input.value = ''
 }
 
 async function readTextFile(file: File) {
@@ -165,14 +200,28 @@ async function saveMaterials() {
   if (!job || materialFiles.value.length === 0) return
 
   isSaving.value = true
+  uploadError.value = ''
+  uploadProgress.value = ''
   try {
-    for (const file of materialFiles.value) {
+    const files = validSelectedMaterials.value
+    if (files.length === 0) {
+      uploadError.value = '没有有效材料可上传，请选择包含 docx、zip、pdf 或图片的材料目录。'
+      return
+    }
+    for (const [index, file] of files.entries()) {
       const relative = (file as any).webkitRelativePath || file.name
+      uploadProgress.value = `正在上传 ${index + 1}/${files.length}: ${relative}`
       await api.post(`/jobs/${job.id}/files`, {
         filename: `materials/${relative}`,
         contentBase64: await readBase64(file)
       })
     }
+    uploadProgress.value = `已上传 ${files.length} 个材料文件`
+    materialFiles.value = []
+  } catch (error: any) {
+    uploadError.value = error?.message || '上传材料失败'
+    window.alert(`上传材料失败：${uploadError.value}`)
+    throw error
   } finally {
     isSaving.value = false
     await jobStore.loadJob(job.id)
@@ -184,14 +233,20 @@ async function runJob() {
   if (!job) return
 
   isRunning.value = true
+  uploadError.value = ''
   try {
     if (hasMaterials.value) {
-      const hasExistingFiles = (job.files || []).some((file) => file.path.startsWith('materials/'))
-      const hasSelectedFiles = materialFiles.value.length > 0
+      const hasExistingFiles =
+        uploadedMaterialFiles.value.length > 0 ||
+        (job.files || []).some(
+          (file) => file.path.startsWith('materials/') && !file.path.endsWith('/.DS_Store')
+        )
+      const hasSelectedFiles = validSelectedMaterials.value.length > 0
       const config = configStore.templateConfig
       const hasTargetConfig = Boolean(config.das_id || config.target_path || config.batch_dir)
       if (!hasExistingFiles && !hasSelectedFiles && !hasTargetConfig) {
-        window.alert('请先上传材料目录，或在运行配置中填写 DAS 编号 / 目标材料路径。')
+        uploadError.value = '请先上传有效材料目录，或在运行配置中填写 DAS 编号 / 目标材料路径。'
+        window.alert(uploadError.value)
         return
       }
     }
@@ -199,7 +254,7 @@ async function runJob() {
       if (markdown.value || markdownFile.value) {
         await saveMarkdown()
       }
-    } else if (materialFiles.value.length > 0) {
+    } else if (validSelectedMaterials.value.length > 0) {
       await saveMaterials()
     }
     const options = {
@@ -212,6 +267,9 @@ async function runJob() {
       }
     }
     await jobStore.runJob(job.id, options)
+  } catch (error: any) {
+    uploadError.value = error?.message || '任务启动失败'
+    window.alert(`任务启动失败：${uploadError.value}`)
   } finally {
     isRunning.value = false
   }
@@ -396,14 +454,14 @@ async function runJob() {
             <button
               type="button"
               class="btn btn-secondary"
-              :disabled="isSaving || materialFiles.length === 0"
+              :disabled="isSaving || validSelectedMaterials.length === 0"
               @click="saveMaterials"
             >
               {{
                 isSaving
                   ? '保存中...'
-                  : materialFiles.length > 0
-                    ? `保存 ${materialFiles.length} 个文件`
+                  : validSelectedMaterials.length > 0
+                    ? `保存 ${validSelectedMaterials.length} 个文件`
                     : '保存材料'
               }}
             </button>
@@ -435,9 +493,12 @@ async function runJob() {
 
       <div v-if="hasMaterials && materialFiles.length" class="selected-files">
         <div class="flex items-center justify-between">
-          <span class="font-medium text-blue-700"
-            >已选择 {{ materialFiles.length }} 个文件准备上传</span
-          >
+          <span class="font-medium text-blue-700">
+            已选择 {{ validSelectedMaterials.length }} 个有效文件准备上传
+            <span v-if="ignoredSelectedCount" class="text-slate-400">
+              ，已忽略 {{ ignoredSelectedCount }} 个系统文件
+            </span>
+          </span>
           <button
             type="button"
             class="text-xs text-red-500 hover:text-red-700 font-medium transition-colors"
@@ -447,6 +508,23 @@ async function runJob() {
           </button>
         </div>
       </div>
+      <div v-if="hasMaterials && uploadedMaterialFiles.length" class="uploaded-files">
+        <div class="uploaded-head">
+          <span>已上传材料 {{ uploadedMaterialFiles.length }} 个</span>
+          <span v-if="jobStore.currentJob" class="text-slate-400">{{ jobStore.currentJob.id }}</span>
+        </div>
+        <ul>
+          <li v-for="file in uploadedMaterialFiles.slice(0, 8)" :key="file.path">
+            <span>{{ file.path.replace(/^materials\//, '') }}</span>
+            <em>{{ Math.max(1, Math.round(file.size / 1024)) }} KB</em>
+          </li>
+        </ul>
+        <p v-if="uploadedMaterialFiles.length > 8" class="uploaded-more">
+          还有 {{ uploadedMaterialFiles.length - 8 }} 个文件已保存
+        </p>
+      </div>
+      <div v-if="uploadProgress" class="upload-progress">{{ uploadProgress }}</div>
+      <div v-if="uploadError" class="upload-error">{{ uploadError }}</div>
       <div v-if="!hasMaterials && markdownFile" class="selected-files">
         <div class="flex items-center justify-between">
           <span class="font-medium text-blue-700">已选择文件: {{ markdownFile.name }}</span>
@@ -573,6 +651,48 @@ async function runJob() {
 
 .selected-files {
   @apply mt-4 rounded-lg border px-4 py-3 text-sm bg-blue-50/50 border-blue-100;
+}
+
+.uploaded-files {
+  @apply mt-4 rounded-lg border bg-white px-4 py-3 text-sm;
+  border-color: var(--line);
+}
+
+.uploaded-head {
+  @apply mb-2 flex items-center justify-between gap-3 text-xs font-semibold text-slate-500;
+}
+
+.uploaded-files ul {
+  @apply space-y-1;
+}
+
+.uploaded-files li {
+  @apply flex items-center justify-between gap-4 rounded bg-slate-50 px-2 py-1;
+}
+
+.uploaded-files li span {
+  @apply min-w-0 truncate text-slate-700;
+}
+
+.uploaded-files li em {
+  @apply shrink-0 not-italic text-xs text-slate-400;
+}
+
+.uploaded-more,
+.upload-progress,
+.upload-error {
+  @apply mt-3 rounded-lg px-4 py-2 text-sm;
+}
+
+.uploaded-more,
+.upload-progress {
+  @apply bg-slate-50 text-slate-500;
+}
+
+.upload-error {
+  @apply border text-red-700;
+  border-color: rgba(239, 68, 68, 0.22);
+  background: rgba(239, 68, 68, 0.06);
 }
 
 .prompt-wrap {

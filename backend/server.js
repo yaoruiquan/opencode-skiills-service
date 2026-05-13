@@ -664,6 +664,34 @@ async function ensureTemplateRunRequirements(job, template, body) {
   if (definition?.requiresInputOrBrief && !(await hasInputFiles(job)) && !taskBrief(body)) {
     throw new Error(`template ${template} requires uploaded input files or options.taskBrief`);
   }
+  if (["phase2-cnvd-report", "phase2-cnnvd-report", "phase2-ncc-report"].includes(template)) {
+    await ensureSubmissionMaterials(job, template, body);
+  }
+}
+
+async function ensureSubmissionMaterials(job, template, body) {
+  const options = runOptions(body);
+  const config = serviceConfig(body);
+  const hasTargetConfig = Boolean(config.das_id || config.target_path || config.batch_dir);
+  if (hasTargetConfig || taskBrief(body)) return;
+
+  const files = await listFiles(path.join(job.paths.input, "materials"));
+  const ignored = new Set([".DS_Store", "Thumbs.db"]);
+  const validExtensions = template === "phase2-ncc-report"
+    ? [".docx", ".zip", ".pdf", ".png", ".jpg", ".jpeg"]
+    : [".docx", ".zip"];
+  const validFiles = files.filter((file) => {
+    const name = path.basename(file.path);
+    const ext = path.extname(name).toLowerCase();
+    return !ignored.has(name) && validExtensions.includes(ext);
+  });
+  if (validFiles.length > 0) return;
+
+  const mode = typeof options.mode === "string" ? options.mode : "";
+  const hint = mode === "batch"
+    ? "请上传包含 DAS-* 子目录的完整批次材料，至少包含平台 docx 或 zip。"
+    : "请上传完整 DAS 材料目录，至少包含平台 docx 或 zip；不要只上传 .DS_Store。";
+  throw new Error(`${template} 缺少有效上报材料。${hint}`);
 }
 
 // ── Prompt-based execution (non-adapter) ───────────────────────────────────
@@ -1260,6 +1288,7 @@ module.exports = {
   decodePathSegments,
   defaultPrompt,
   groupOutputFilesByTemplate,
+  ensureSubmissionMaterials,
   matchesOutputPattern,
   md2wechatPrompt,
   parseExecutionEvents,

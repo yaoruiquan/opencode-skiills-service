@@ -16,6 +16,7 @@ const {
   promptForRun,
   redactSensitiveText,
   decodePathSegments,
+  ensureSubmissionMaterials,
   resolveCreateTemplate,
   resolveRunTemplate,
   serviceConfig,
@@ -104,6 +105,26 @@ test("complex templates require uploaded input files or a task brief", async () 
   assert.match(prompt, /submit=false/);
   assert.match(prompt, /上报 DAS-T100001/);
   assert.match(prompt, new RegExp(job.paths.output.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
+});
+
+test("submission templates reject material uploads that only contain system files", async () => {
+  const job = await createJob({ template: "phase2-cnvd-report" });
+  const materialDir = path.join(job.paths.input, "materials", "DAS-T000001");
+  await fs.mkdir(materialDir, { recursive: true });
+  await fs.writeFile(path.join(materialDir, ".DS_Store"), "metadata", "utf8");
+
+  await assert.rejects(
+    () =>
+      ensureSubmissionMaterials(job, "phase2-cnvd-report", {
+        options: { mode: "single", serviceConfig: {} },
+      }),
+    /缺少有效上报材料/,
+  );
+
+  await fs.writeFile(path.join(materialDir, "CNVD-test.docx"), "docx", "utf8");
+  await ensureSubmissionMaterials(job, "phase2-cnvd-report", {
+    options: { mode: "single", serviceConfig: {} },
+  });
 });
 
 test("complex templates include uploaded input files in the prompt", async () => {
