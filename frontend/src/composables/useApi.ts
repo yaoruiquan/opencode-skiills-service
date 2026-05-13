@@ -14,7 +14,19 @@ export function useApi() {
     })
 
     const text = await response.text()
-    const data = text ? JSON.parse(text) : {}
+    let data: any = {}
+    if (text) {
+      try {
+        data = JSON.parse(text)
+      } catch {
+        const plainText = text.replace(/<[^>]*>/g, ' ').replace(/\s+/g, ' ').trim()
+        const message =
+          response.status === 413
+            ? '上传文件过大，请压缩材料或分批上传。'
+            : plainText || `HTTP ${response.status}`
+        throw new Error(message)
+      }
+    }
 
     if (!response.ok) {
       const message =

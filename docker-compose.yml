@@ -48,6 +48,7 @@ services:
     environment:
       NODE_ENV: production
       SKILLS_API_PORT: "4100"
+      SKILLS_API_MAX_BODY_MB: "200"
       SKILLS_API_JOBS_ROOT: /data/work/jobs
       SKILLS_API_SKILL_ROOT: /root/.agents/skills
       OPENCODE_SERVER_URL: http://opencode-server:4096
