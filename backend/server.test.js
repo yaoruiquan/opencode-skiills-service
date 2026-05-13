@@ -473,6 +473,50 @@ test("normal CNVD captcha is not treated as manual firewall verification", () =>
   assert.ok(!events.some((event) => event.label === "等待人工防火墙验证码"));
 });
 
+test("broken CNVD captcha image is surfaced as manual firewall verification", () => {
+  const events = parseExecutionEvents(
+    JSON.stringify({
+      type: "tool_use",
+      timestamp: "2026-05-09T02:04:00.000Z",
+      part: {
+        tool: "bash",
+        state: {
+          status: "completed",
+          output: '{"ok":false,"code":"CNVD_CAPTCHA_IMAGE_BROKEN","reason":"提交验证码图片未加载成功"}',
+        },
+      },
+    }),
+    "",
+    "",
+    { status: "running", run: { startedAt: "2026-05-09T01:59:00.000Z" } },
+    "",
+  );
+
+  assert.ok(events.some((event) => event.label === "等待人工防火墙验证码" && event.status === "warning"));
+});
+
+test("invalid CNVD OCR text is surfaced as captcha failure", () => {
+  const events = parseExecutionEvents(
+    JSON.stringify({
+      type: "tool_use",
+      timestamp: "2026-05-09T02:05:00.000Z",
+      part: {
+        tool: "bash",
+        state: {
+          status: "completed",
+          output: '{"ok":false,"code":"INVALID_OCR_TEXT","value":"存在"}',
+        },
+      },
+    }),
+    "",
+    "",
+    { status: "running", run: { startedAt: "2026-05-09T01:59:00.000Z" } },
+    "",
+  );
+
+  assert.ok(events.some((event) => event.label === "验证码识别失败" && event.status === "failed"));
+});
+
 test("adapter target lookup supports nested materials and target_path under materials", async () => {
   const { findMaterialTarget } = require("./adapters/runner.js");
   const root = await fs.mkdtemp(path.join(os.tmpdir(), "adapter-target-"));

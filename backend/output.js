@@ -165,6 +165,28 @@ function inferBusinessEvent(data) {
   const failureText = [state.output, state.metadata?.output, state.status].filter(Boolean).join(" ");
   const failed = /error|failed|could not|econnrefused|target closed|timeout|未找到|无法|失败/i.test(failureText);
 
+  if (/CNVD_CAPTCHA_IMAGE_BROKEN/i.test(text)) {
+    return {
+      time,
+      type: "progress",
+      stage: "cloudflare",
+      status: "warning",
+      label: "等待人工防火墙验证码",
+      detail: "CNVD 提交验证码图片未加载成功，疑似 /common/myCodeNew 被防火墙验证码拦截，需要前端人工处理。",
+    };
+  }
+
+  if (/INVALID_OCR_TEXT/i.test(text)) {
+    return {
+      time,
+      type: "progress",
+      stage: "captcha",
+      status: "failed",
+      label: "验证码识别失败",
+      detail: "OCR 结果像页面占位文字，不是真实验证码，已阻止提交。",
+    };
+  }
+
   if (/field integrity|完整性检查|all fields pass/i.test(text)) {
     return {
       time,

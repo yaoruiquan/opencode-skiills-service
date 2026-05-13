@@ -458,6 +458,8 @@ function verificationInstructions(job, template) {
       "- 其他平台或其他验证码不要切换前端人工，继续按对应 skill 的脚本和说明处理。",
       "- 遇到 CNVD 防火墙/WAF 访问验证码时，保存截图到 logs/human-cnvd-firewall.png 或 logs/human-cnvd-firewall-*.png。",
       '- 随后追加进度：{"stage":"captcha","status":"warning","label":"等待人工防火墙验证码","detail":"截图已保存至 logs/human-cnvd-firewall.png，请在前端输入验证码。"}',
+      "- 如果 phase2-cnvd-report 的 browser_helpers.open_captcha_tab_command 返回 CNVD_CAPTCHA_IMAGE_BROKEN，说明 /common/myCodeNew 被防火墙验证码拦截或提交验证码图片加载失败，也必须走上述前端人工防火墙验证码流程。",
+      "- 如果 submit-captcha 返回 INVALID_OCR_TEXT，说明 OCR 识别到了页面占位文字，禁止提交该值，必须重新获取真实验证码或进入防火墙人工处理。",
       '- 写入进度后暂停轮询 input/human-input.json；不要创建空的占位 human-input.json。',
       '- 只有读到 status="submitted" 且 value/code/text/captcha_value 任一字段非空，才认为前端已提交验证码。',
       "- 读到验证码后填入防火墙验证码输入框并提交，然后继续原 skill 上报流程。",
