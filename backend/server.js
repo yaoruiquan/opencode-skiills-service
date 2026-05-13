@@ -277,30 +277,6 @@ async function createOutputArchive(job) {
 }
 
 function parseExecutionEvents(stdout = "", stderr = "", adapter = "", job = {}, progress = "") {
-  const progressEvents = parseProgressEvents(progress);
-  if (progressEvents.length) {
-    return sanitizeExecutionEvents(progressEvents.map((entry) => ({
-      time: entry.time || new Date().toISOString(),
-      type: "progress",
-      stage: entry.stage || "",
-      status: entry.status === "done" ? "done" : entry.status === "failed" ? "failed" : entry.status === "warning" ? "warning" : "running",
-      label: entry.label || {
-        prepare: "准备任务",
-        form_context: "准备表单上下文",
-        login: "登录态检查",
-        cloudflare: "人机验证",
-        fill_form: "填写表单",
-        upload: "上传附件",
-        captcha: "验证码识别",
-        browser: "浏览器自动化",
-        submit: "提交表单",
-        extract_id: "提取编号",
-        summary: "生成摘要",
-      }[entry.stage] || entry.stage || "执行进度",
-      detail: entry.detail || "",
-    })));
-  }
-
   const events = parseExecutionEventsRaw(stdout, stderr, adapter, job, progress);
   for (const line of stdout.split("\n").filter(Boolean)) {
     try {

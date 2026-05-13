@@ -421,24 +421,56 @@ test("execution events summarize opencode jsonl and stderr", () => {
   assert.ok(events.some((event) => event.label === "输出文件校验失败"));
 });
 
-test("execution events prefer business progress jsonl", () => {
+test("execution events merge business progress with opencode jsonl", () => {
   const progress = [
     JSON.stringify({ stage: "login", status: "running", detail: "检查 CNVD 登录态", time: "2026-05-09T02:00:00.000Z" }),
     JSON.stringify({ stage: "fill_form", status: "done", label: "表单字段已填写", detail: "base_info/detail_info", time: "2026-05-09T02:01:00.000Z" }),
     JSON.stringify({ stage: "captcha", status: "warning", detail: "需要人工识别验证码", time: "2026-05-09T02:02:00.000Z" }),
   ].join("\n");
   const events = parseExecutionEvents(
-    '{"type":"step_start"}\n',
+    [
+      JSON.stringify({ type: "step_start", timestamp: "2026-05-09T02:03:00.000Z" }),
+      JSON.stringify({
+        type: "text",
+        timestamp: "2026-05-09T02:04:00.000Z",
+        part: { text: "All fields pass integrity check. Now proceeding with captcha handling." },
+      }),
+    ].join("\n"),
     "template phase2-cnvd-report missing required outputs: output/summary.txt\n",
     "",
     { status: "running", run: { startedAt: "2026-05-09T01:59:00.000Z" } },
     progress,
   );
 
-  assert.equal(events[0].label, "登录态检查");
+  assert.equal(events[0].label, "登录平台");
   assert.equal(events[1].label, "表单字段已填写");
   assert.equal(events[2].label, "验证码识别");
-  assert.ok(!events.some((event) => event.label === "OpenCode 进入新步骤"));
+  assert.ok(events.some((event) => event.label === "OpenCode 步骤 1"));
+  assert.ok(events.some((event) => event.label === "表单字段校验" && event.status === "done"));
+});
+
+test("normal CNVD captcha is not treated as manual firewall verification", () => {
+  const events = parseExecutionEvents(
+    JSON.stringify({
+      type: "tool_use",
+      timestamp: "2026-05-09T02:04:00.000Z",
+      part: {
+        tool: "bash",
+        state: {
+          status: "completed",
+          input: { command: "python3 /root/.agents/skills/phase2-cnvd-report/scripts/captcha_ocr.py /tmp/captcha.png --context submit" },
+          output: "szsx\n",
+        },
+      },
+    }),
+    "",
+    "",
+    { status: "running", run: { startedAt: "2026-05-09T01:59:00.000Z" } },
+    "",
+  );
+
+  assert.ok(events.some((event) => event.stage === "captcha" && event.status === "running"));
+  assert.ok(!events.some((event) => event.label === "等待人工防火墙验证码"));
 });
 
 test("adapter target lookup supports nested materials and target_path under materials", async () => {

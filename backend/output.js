@@ -153,8 +153,8 @@ function businessStageLabel(stage) {
 
 function inferBusinessEvent(data) {
   const part = data.part || {};
-  if (data.type !== "tool_use") return null;
-  if (!["bash"].includes(part.tool || "") && !String(part.tool || "").startsWith("chrome-devtools-")) {
+  if (!["tool_use", "text"].includes(data.type)) return null;
+  if (data.type === "tool_use" && !["bash", "todowrite"].includes(part.tool || "") && !String(part.tool || "").startsWith("chrome-devtools-")) {
     return null;
   }
   const text = collectEventText(data);
@@ -165,16 +165,28 @@ function inferBusinessEvent(data) {
   const failureText = [state.output, state.metadata?.output, state.status].filter(Boolean).join(" ");
   const failed = /error|failed|could not|econnrefused|target closed|timeout|未找到|无法|失败/i.test(failureText);
 
-  if (/本站开启了验证码保护|请输入验证码|验证码|captcha/i.test(text)) {
+  if (/field integrity|完整性检查|all fields pass/i.test(text)) {
     return {
       time,
       type: "progress",
-      stage: "captcha",
-      status: "warning",
-      label: "验证码识别",
-      detail: /本站开启了验证码保护|请输入验证码/.test(text)
-        ? "CNVD 页面进入验证码保护，需要完成验证码后才能继续访问表单。"
-        : "任务正在处理验证码相关步骤。",
+      stage: "fill_form",
+      status: failed ? "failed" : "done",
+      label: "表单字段校验",
+      detail: failed ? "表单字段完整性检查失败。" : "表单字段已填写并通过完整性检查。",
+    };
+  }
+
+  if (/本站开启了验证码保护|请输入验证码|验证码|captcha/i.test(text)) {
+    const wafCaptcha = /本站开启了验证码保护|请输入验证码，以继续访问|防火墙|waf|cloudflare|turnstile/i.test(text);
+    return {
+      time,
+      type: "progress",
+      stage: wafCaptcha ? "cloudflare" : "captcha",
+      status: wafCaptcha ? "warning" : failed ? "failed" : "running",
+      label: wafCaptcha ? "等待人工防火墙验证码" : "验证码识别",
+      detail: wafCaptcha
+        ? "CNVD 页面进入访问验证码保护，需要前端人工处理后继续。"
+        : "任务正在调用 skill 内验证码识别脚本处理登录或提交验证码。",
     };
   }
 
