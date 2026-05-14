@@ -79,7 +79,7 @@ services:
     depends_on:
       - skills-api
     ports:
-      - "127.0.0.1:4101:80"
+      - "4101:80"
 
   # Vue development server (optional, use for hot reload during development)
   frontend-dev:
