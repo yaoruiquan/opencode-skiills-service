@@ -150,12 +150,18 @@ function shouldRequireSubmissionResult(job, template) {
 }
 
 function platformIdFromSubmissionResult(result = {}) {
-  return result.cnvd_id || result.cnnvd_id || result.ncc_id || result.platform_id || result.submission_id || "";
+  return result.cnvd_id || result.cnvdId ||
+    result.cnnvd_id || result.cnnvdId ||
+    result.ncc_id || result.nccId ||
+    result.platform_id || result.platformId ||
+    result.submission_id || result.submissionId || "";
 }
 
 function isSuccessfulSubmissionResult(result = {}) {
   const status = String(result.status || result.result || "").toLowerCase();
-  const success = result.success === true || ["success", "submitted", "completed", "ok"].includes(status);
+  const success = result.success === true ||
+    result.submitted === true ||
+    ["success", "submitted", "completed", "ok", "待研判", "待披露"].includes(status);
   return success && Boolean(platformIdFromSubmissionResult(result));
 }
 
@@ -1405,8 +1411,11 @@ module.exports = {
   matchesOutputPattern,
   md2wechatPrompt,
   parseExecutionEvents,
+  effectiveJobState,
   promptForRun,
+  platformIdFromSubmissionResult,
   redactSensitiveText,
+  isSuccessfulSubmissionResult,
   normalizeJobStatus,
   resolveCreateTemplate,
   resolveRunTemplate,

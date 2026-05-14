@@ -18,6 +18,9 @@ const {
   redactSensitiveText,
   decodePathSegments,
   ensureSubmissionMaterials,
+  effectiveJobState,
+  isSuccessfulSubmissionResult,
+  platformIdFromSubmissionResult,
   resolveCreateTemplate,
   resolveRunTemplate,
   serviceConfig,
@@ -419,6 +422,32 @@ test("successful submission result wins over missing summary outputs", async () 
   );
 
   await assert.doesNotReject(() => validateRequiredOutputs(job, "phase2-cnvd-report", "single"));
+});
+
+test("cnnvd camelCase submission result is treated as submitted even after cancellation", async () => {
+  const job = await createJob({ template: "phase2-cnnvd-report" });
+  job.status = "canceled";
+  job.finishedAt = "2026-05-14T06:17:51.834Z";
+  job.run = {
+    template: "phase2-cnnvd-report",
+    options: { mode: "single", serviceConfig: { submit: true } },
+    finishedAt: job.finishedAt,
+  };
+  const result = {
+    cnnvdId: "CNNVD-2026-81852337",
+    title: "Claude Code系统-getMcpHeadersFromHelper模块存在命令执行漏洞",
+    submitTime: "2026-05-14 14:19:24",
+    status: "待研判",
+  };
+  await fs.writeFile(path.join(job.paths.output, "submission-result.json"), JSON.stringify(result) + "\n", "utf8");
+
+  assert.equal(platformIdFromSubmissionResult(result), "CNNVD-2026-81852337");
+  assert.equal(isSuccessfulSubmissionResult(result), true);
+
+  const effective = await effectiveJobState(job);
+  assert.equal(effective.effectiveStatus, "submitted");
+  assert.equal(effective.effectiveStatusLabel, "平台已提交");
+  assert.equal(effective.platformId, "CNNVD-2026-81852337");
 });
 
 test("submit=false submission templates do not require submission result", async () => {
