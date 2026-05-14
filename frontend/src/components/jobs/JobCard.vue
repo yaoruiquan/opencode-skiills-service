@@ -24,7 +24,7 @@ const platformId = computed(
 const statusClass = computed(() => ({
   'status-created': displayStatus.value === 'created',
   'status-running': displayStatus.value === 'running',
-  'status-completed': displayStatus.value === 'completed' || displayStatus.value === 'submitted',
+  'status-completed': displayStatus.value === 'succeeded' || displayStatus.value === 'submitted',
   'status-failed': displayStatus.value === 'failed',
   'status-canceled': displayStatus.value === 'canceled'
 }))
@@ -34,7 +34,8 @@ const statusText = computed(
     ({
       created: '已创建',
       running: '运行中',
-      completed: '已完成',
+      retrying: '重试中',
+      succeeded: '已完成',
       submitted: '平台已提交',
       failed: '失败',
       canceled: '已中断'

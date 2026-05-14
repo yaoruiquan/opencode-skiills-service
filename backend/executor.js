@@ -11,6 +11,7 @@ const { readJob, writeJob, safeJoin, now, isActiveStatus, isSubmitRun } = requir
 const { runOptions } = require("./templates.js");
 
 const CANCEL_MARKER = "cancel-requested.json";
+const SUCCESS_STATUS = "succeeded";
 
 function tryLoadAdapter(template) {
   const relativePath = `./adapters/${template}.js`;
@@ -178,7 +179,7 @@ function stopActiveChild(active) {
 }
 
 async function cancelJob(job, { ACTIVE_RUNS, startPush }) {
-  if (job.status === "canceled" || job.status === "completed" || job.status === "failed") return;
+  if (job.status === "canceled" || job.status === "completed" || job.status === SUCCESS_STATUS || job.status === "failed") return;
   const canceledAt = now();
   job.status = "canceled";
   job.finishedAt = canceledAt;
@@ -215,7 +216,7 @@ async function runAdapterAsync(jobId, adapter, body, mode, { startPush }) {
     return;
   }
 
-  job.status = result.success ? "completed" : "failed";
+  job.status = result.success ? SUCCESS_STATUS : "failed";
   if (!result.success) job.run.error = result.error || "adapter failed";
   await writeJob(job);
   startPush(jobId).catch(() => {});
@@ -287,7 +288,7 @@ async function runJobAttempts(jobId, prompt, models, body, {
       job.run.attempts.push(runAttempt);
 
       if (exitCode === 0) {
-        job.status = "completed";
+        job.status = SUCCESS_STATUS;
         job.run.finishedAt = now();
         job.run.exitCode = 0;
         job.run.model = model;

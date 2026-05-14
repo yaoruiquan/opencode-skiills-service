@@ -20,7 +20,7 @@ export interface AppState {
   pollTimer: number | null
 }
 
-export type JobStatus = 'created' | 'running' | 'completed' | 'failed' | 'canceled'
+export type JobStatus = 'created' | 'running' | 'retrying' | 'succeeded' | 'failed' | 'canceled'
 
 export interface JobFilter {
   template?: string

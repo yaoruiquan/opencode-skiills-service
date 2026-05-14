@@ -19,6 +19,9 @@ const SKILL_ROOT = process.env.SKILLS_API_SKILL_ROOT || "/root/.agents/skills";
 const ACTIVE_RUNS = new Map();
 const CANCEL_MARKER = "cancel-requested.json";
 const USE_DETERMINISTIC_ADAPTERS = process.env.SKILLS_API_USE_ADAPTERS === "true";
+const SUCCESS_STATUS = "succeeded";
+const LEGACY_SUCCESS_STATUS = "completed";
+const SUMMARY_FALLBACK_TEMPLATES = new Set(["vulnerability-alert-processor"]);
 
 // ── Module imports ─────────────────────────────────────────────────────────
 
@@ -115,12 +118,20 @@ function statusLabel(status) {
     created: "已创建",
     running: "运行中",
     retrying: "重试中",
-    completed: "已完成",
     succeeded: "已完成",
+    completed: "已完成",
     failed: "已失败",
     canceled: "已中断",
   };
   return labels[status] || status || "未知";
+}
+
+function normalizeJobStatus(status) {
+  return status === LEGACY_SUCCESS_STATUS ? SUCCESS_STATUS : status;
+}
+
+function isSuccessStatus(status) {
+  return status === SUCCESS_STATUS || status === LEGACY_SUCCESS_STATUS;
 }
 
 function outputPath(pattern) {
@@ -163,8 +174,8 @@ async function effectiveJobState(job) {
     };
   }
   return {
-    effectiveStatus: job.status,
-    effectiveStatusLabel: statusLabel(job.status),
+    effectiveStatus: normalizeJobStatus(job.status),
+    effectiveStatusLabel: statusLabel(normalizeJobStatus(job.status)),
     platformId: "",
     submissionResult: result,
   };
@@ -186,7 +197,10 @@ function redactObject(value) {
 }
 
 function jobForResponse(job) {
-  return redactObject(job);
+  const normalized = { ...job };
+  if (normalized.status) normalized.status = normalizeJobStatus(normalized.status);
+  if (normalized.effectiveStatus) normalized.effectiveStatus = normalizeJobStatus(normalized.effectiveStatus);
+  return redactObject(normalized);
 }
 
 async function jobForResponseWithEffectiveState(job) {
@@ -240,6 +254,66 @@ async function validateRequiredOutputs(job, template, mode = "") {
     );
   }
   return report;
+}
+
+async function writeFallbackSummary(job, template, {
+  outcome = "failed",
+  error = "",
+  mode = "",
+  force = false,
+} = {}) {
+  if (!SUMMARY_FALLBACK_TEMPLATES.has(template)) return false;
+
+  const summaryPath = path.join(job.paths.output, "summary.txt");
+  try {
+    await fsp.access(summaryPath);
+    return false;
+  } catch {
+    // Missing summary.txt is the only case this helper handles.
+  }
+
+  if (!force) {
+    const report = await validateRequiredOutputsReport(job, template, mode);
+    const missing = report?.missing || [];
+    if (missing.length !== 1 || missing[0] !== "summary.txt") return false;
+  }
+
+  const files = await listFiles(job.paths.output).catch(() => []);
+  const progress = parseProgressEvents(await readProgress(job).catch(() => ""));
+  const recentProgress = progress.slice(-5);
+  const lines = [
+    "# 执行摘要",
+    "",
+    `- job: ${job.id}`,
+    `- template: ${template}`,
+    `- mode: ${mode || job.run?.options?.mode || ""}`,
+    `- status: ${outcome}`,
+    `- generated_by: skills-api fallback`,
+    `- generated_at: ${now()}`,
+  ];
+
+  if (error) lines.push(`- error: ${redactSensitiveText(error)}`);
+
+  lines.push("", "## 输出文件");
+  if (files.length) {
+    for (const file of files) {
+      lines.push(`- ${file.path} (${file.size} bytes)`);
+    }
+  } else {
+    lines.push("- 无输出文件");
+  }
+
+  if (recentProgress.length) {
+    lines.push("", "## 最近进度");
+    for (const event of recentProgress) {
+      const label = event.label || event.stage || "progress";
+      const detail = event.detail || "";
+      lines.push(`- [${event.status || "info"}] ${label}${detail ? `: ${detail}` : ""}`);
+    }
+  }
+
+  await fsp.writeFile(summaryPath, lines.join("\n") + "\n", "utf8");
+  return true;
 }
 
 async function outputFilesForJob(job) {
@@ -322,7 +396,7 @@ function parseExecutionEvents(stdout = "", stderr = "", adapter = "", job = {}, 
       type: "status",
       label: statusLabel(job.status),
       detail: job?.run?.error || "",
-      status: job.status === "failed" ? "failed" : job.status === "completed" || job.status === "succeeded" ? "done" : "running",
+      status: job.status === "failed" ? "failed" : isSuccessStatus(job.status) ? "done" : "running",
     });
   }
 
@@ -565,6 +639,16 @@ function complexSkillPrompt(job, template, body) {
     );
   }
 
+  if (template === "vulnerability-alert-processor") {
+    parts.push(
+      "漏洞预警服务化输出要求：",
+      "- 无论任务成功、部分成功还是失败，最后都必须写入 output/summary.txt。",
+      "- summary.txt 必须列出已生成文件、缺失文件、是否发布/上传/推送，以及失败原因或人工处理项。",
+      "- 不要只写 logs/progress.jsonl；summary.txt 是后端验收和前端失败说明的必需文件。",
+      "",
+    );
+  }
+
   if (template === "cnvd-weekly-db-update") {
     parts.push(
       "check 模式只检查 input/xml 下的 XML 数据和远端环境，不执行写入更新。",
@@ -723,6 +807,12 @@ async function runJob(job, body) {
       latest.status = "failed";
       latest.run.finishedAt = now();
       latest.run.error = error.message || String(error);
+      await writeFallbackSummary(latest, latest.run.template, {
+        outcome: "failed",
+        error: latest.run.error,
+        mode: latest.run.options?.mode || "",
+        force: true,
+      });
       await writeJob(latest);
       startPush(latest.id).catch(() => {});
     });
@@ -754,6 +844,12 @@ async function runJob(job, body) {
     latest.status = "failed";
     latest.run.finishedAt = now();
     latest.run.error = error.message || String(error);
+    await writeFallbackSummary(latest, latest.run.template, {
+      outcome: "failed",
+      error: latest.run.error,
+      mode: latest.run.options?.mode || "",
+      force: true,
+    });
     await writeJob(latest);
     startPush(latest.id).catch(() => {});
   });
@@ -797,16 +893,32 @@ async function runAdapterAsyncInner(jobId, adapter, body, mode) {
 
   if (result.success) {
     try {
+      await writeFallbackSummary(latest, latest.run.template, {
+        outcome: SUCCESS_STATUS,
+        mode: mode || latest.run.options?.mode || "",
+      });
       await validateRequiredOutputs(latest, latest.run.template, mode || latest.run.options?.mode || "");
-      latest.status = "completed";
+      latest.status = SUCCESS_STATUS;
     } catch (error) {
       latest.status = "failed";
       latest.run.error = error.message || String(error);
+      await writeFallbackSummary(latest, latest.run.template, {
+        outcome: "failed",
+        error: latest.run.error,
+        mode: mode || latest.run.options?.mode || "",
+        force: true,
+      });
       await fsp.appendFile(latest.run.stderr, `${latest.run.error}\n`, "utf8").catch(() => {});
     }
   } else {
     latest.status = "failed";
     latest.run.error = result.error || "adapter failed";
+    await writeFallbackSummary(latest, latest.run.template, {
+      outcome: "failed",
+      error: latest.run.error,
+      mode: mode || latest.run.options?.mode || "",
+      force: true,
+    });
   }
   latest.run.exitCode = result.success ? 0 : 1;
   latest.run.finishedAt = finishedAt;
@@ -859,15 +971,25 @@ async function runJobAttemptsInner(jobId, prompt, models, body) {
 
       if (exitCode === 0) {
         try {
+          await writeFallbackSummary(job, job.run.template, {
+            outcome: SUCCESS_STATUS,
+            mode: job.run.options?.mode || runMode(job.run.template, body),
+          });
           await validateRequiredOutputs(job, job.run.template, job.run.options?.mode || runMode(job.run.template, body));
-          job.status = "completed";
+          job.status = SUCCESS_STATUS;
         } catch (error) {
           job.status = "failed";
           job.run.error = error.message || String(error);
+          await writeFallbackSummary(job, job.run.template, {
+            outcome: "failed",
+            error: job.run.error,
+            mode: job.run.options?.mode || runMode(job.run.template, body),
+            force: true,
+          });
           await fsp.appendFile(stderrPath, `${job.run.error}\n`, "utf8").catch(() => {});
         }
         job.run.finishedAt = now();
-        job.run.exitCode = job.status === "completed" ? 0 : 1;
+        job.run.exitCode = isSuccessStatus(job.status) ? 0 : 1;
         job.run.model = model;
         await writeJob(job);
         ACTIVE_RUNS.delete(jobId);
@@ -892,6 +1014,12 @@ async function runJobAttemptsInner(jobId, prompt, models, body) {
     job.run.error = lastError || `${model} failed`;
     if (index === attemptPlan.length - 1) {
       job.status = "failed";
+      await writeFallbackSummary(job, job.run.template, {
+        outcome: "failed",
+        error: job.run.error,
+        mode: job.run.options?.mode || runMode(job.run.template, body),
+        force: true,
+      });
       await writeJob(job);
       ACTIVE_RUNS.delete(jobId);
       startPush(jobId).catch(() => {});
@@ -907,7 +1035,7 @@ async function writeCancelMarkerFile(job, canceledAt) {
 }
 
 async function cancelJobHandler(job) {
-  if (["canceled", "completed", "failed"].includes(job.status)) return;
+  if (["canceled", "completed", "succeeded", "failed"].includes(job.status)) return;
   const canceledAt = now();
   job.status = "canceled";
   job.finishedAt = canceledAt;
@@ -1272,6 +1400,7 @@ module.exports = {
   parseExecutionEvents,
   promptForRun,
   redactSensitiveText,
+  normalizeJobStatus,
   resolveCreateTemplate,
   resolveRunTemplate,
   route,
@@ -1279,6 +1408,7 @@ module.exports = {
   serviceConfig,
   startServer,
   validateRequiredOutputs,
+  writeFallbackSummary,
   writeJob,
   writeServiceConfig,
 };

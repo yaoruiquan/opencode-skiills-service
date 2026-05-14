@@ -19,7 +19,7 @@ const failureReason = computed(() => {
   return job.run?.error || job.logs?.stderr?.split('\n').filter(Boolean).slice(-1)[0] || ''
 })
 const { events: pushEvents, connectionStatus } = useSSE(() => currentJobId.value)
-const jobStatuses = new Set(['created', 'running', 'completed', 'failed', 'canceled'])
+const jobStatuses = new Set(['created', 'running', 'retrying', 'succeeded', 'failed', 'canceled'])
 
 function pushPatch(data: any) {
   const patch: Record<string, any> = {}

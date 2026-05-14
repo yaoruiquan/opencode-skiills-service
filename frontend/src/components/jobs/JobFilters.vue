@@ -36,7 +36,7 @@ function onStatusChange(event: Event) {
       <option value="">全部状态</option>
       <option value="created">已创建</option>
       <option value="running">运行中</option>
-      <option value="completed">已成功</option>
+      <option value="succeeded">已成功</option>
       <option value="failed">已失败</option>
       <option value="canceled">已中断</option>
     </select>

@@ -26,8 +26,8 @@ export interface Job {
   type: string
   template: string
   title: string
-  status: 'created' | 'running' | 'completed' | 'failed' | 'canceled'
-  effectiveStatus?: 'created' | 'running' | 'completed' | 'failed' | 'canceled' | 'submitted'
+  status: 'created' | 'running' | 'retrying' | 'succeeded' | 'failed' | 'canceled'
+  effectiveStatus?: 'created' | 'running' | 'retrying' | 'succeeded' | 'failed' | 'canceled' | 'submitted'
   effectiveStatusLabel?: string
   platformId?: string
   submissionResult?: Record<string, any> | null

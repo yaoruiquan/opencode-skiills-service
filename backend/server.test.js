@@ -12,6 +12,7 @@ const {
   complexSkillPrompt,
   contentDispositionAttachment,
   md2wechatPrompt,
+  normalizeJobStatus,
   parseExecutionEvents,
   promptForRun,
   redactSensitiveText,
@@ -21,6 +22,7 @@ const {
   resolveRunTemplate,
   serviceConfig,
   validateRequiredOutputs,
+  writeFallbackSummary,
   writeJob,
   writeServiceConfig,
 } = require("./server");
@@ -248,6 +250,39 @@ test("phase1 template validates required output contract", async () => {
   await fs.writeFile(path.join(job.paths.output, "summary.txt"), "ok\n", "utf8");
 
   await assert.doesNotReject(() => validateRequiredOutputs(job, "phase1-material-processor"));
+});
+
+test("vulnerability alert fallback summary satisfies output contract when only summary is missing", async () => {
+  const job = await createJob({ template: "vulnerability-alert-processor" });
+  job.run = {
+    template: "vulnerability-alert-processor",
+    options: { mode: "full" },
+  };
+  await fs.writeFile(path.join(job.paths.output, "final.md"), "# report\n", "utf8");
+  await fs.writeFile(path.join(job.paths.output, "final.docx"), "docx", "utf8");
+  await fs.writeFile(path.join(job.paths.output, "render_context.json"), "{}\n", "utf8");
+
+  await assert.rejects(
+    () => validateRequiredOutputs(job, "vulnerability-alert-processor", "full"),
+    /output\/summary\.txt/,
+  );
+
+  const wrote = await writeFallbackSummary(job, "vulnerability-alert-processor", {
+    outcome: "succeeded",
+    mode: "full",
+  });
+  const summary = await fs.readFile(path.join(job.paths.output, "summary.txt"), "utf8");
+
+  assert.equal(wrote, true);
+  assert.match(summary, /generated_by: skills-api fallback/);
+  assert.match(summary, /final\.md/);
+  await assert.doesNotReject(() => validateRequiredOutputs(job, "vulnerability-alert-processor", "full"));
+});
+
+test("successful job status normalizes legacy completed to succeeded", () => {
+  assert.equal(normalizeJobStatus("completed"), "succeeded");
+  assert.equal(normalizeJobStatus("succeeded"), "succeeded");
+  assert.equal(normalizeJobStatus("failed"), "failed");
 });
 
 test("service config is written into job input and referenced by prompt", async () => {

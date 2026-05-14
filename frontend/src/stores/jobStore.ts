@@ -18,7 +18,7 @@ export const useJobStore = defineStore('job', () => {
 
   const runningJobs = computed(() => jobs.value.filter((job) => job.status === 'running'))
 
-  const completedJobs = computed(() => jobs.value.filter((job) => job.status === 'completed'))
+  const completedJobs = computed(() => jobs.value.filter((job) => job.status === 'succeeded'))
 
   async function loadTemplates() {
     try {

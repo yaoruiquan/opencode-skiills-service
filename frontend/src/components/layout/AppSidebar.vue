@@ -21,7 +21,8 @@ const statusText = computed(() => {
   const labels: Record<string, string> = {
     created: '已创建',
     running: '运行中',
-    completed: '已完成',
+    retrying: '重试中',
+    succeeded: '已完成',
     submitted: '平台已提交',
     failed: '已失败',
     canceled: '已中断'
@@ -52,7 +53,7 @@ function cancelJob() {
               :class="{
                 'status-created': currentJob?.status === 'created',
                 'status-running': isRunning,
-                'status-completed': displayStatus === 'completed' || displayStatus === 'submitted',
+                'status-completed': displayStatus === 'succeeded' || displayStatus === 'submitted',
                 'status-failed': displayStatus === 'failed',
                 'status-canceled': displayStatus === 'canceled'
               }"

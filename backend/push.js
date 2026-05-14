@@ -9,6 +9,10 @@ const fsp = require("node:fs/promises");
 const clients = new Map();
 let clientsCounter = 0;
 
+function normalizeStatus(status) {
+  return status === "completed" ? "succeeded" : status;
+}
+
 function push(jobId, event, data) {
   for (const [clientId, client] of clients) {
     if (client.jobId !== jobId) continue;
@@ -58,7 +62,7 @@ async function startPush(jobId, { readJob, readLogs, readProgress, parseExecutio
     lastUpdated = job.updatedAt;
     lastSignature = currentSignature;
 
-    const terminalStates = ["completed", "failed", "canceled"];
+    const terminalStates = ["completed", "succeeded", "failed", "canceled"];
     const isTerminal = terminalStates.includes(job.status);
 
     if (isTerminal) {
@@ -74,7 +78,7 @@ async function startPush(jobId, { readJob, readLogs, readProgress, parseExecutio
       }
 
       push(jobId, "push", {
-        status: job.status,
+        status: normalizeStatus(job.status),
         jobId,
         ...currentDetail,
         outputs,
@@ -114,7 +118,7 @@ async function executionDetail(job, logs, readProgress) {
     : [];
   return {
     run: latestRun,
-    status: job.status,
+    status: normalizeStatus(job.status),
     logs,
     events,
   };
