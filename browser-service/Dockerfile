@@ -20,7 +20,7 @@ RUN useradd -m -u 1000 chrome
 COPY start.sh /usr/local/bin/start-chrome
 RUN chmod +x /usr/local/bin/start-chrome
 
-USER chrome
+USER root
 WORKDIR /home/chrome
 
 CMD ["/usr/local/bin/start-chrome"]
