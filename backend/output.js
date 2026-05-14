@@ -329,6 +329,7 @@ function normalizeProgressStatus(status) {
   if (status === "done") return "done";
   if (status === "failed") return "failed";
   if (status === "warning") return "warning";
+  if (status === "blocked" || status === "waiting") return "warning";
   return "running";
 }
 

@@ -26,6 +26,7 @@ const {
   writeJob,
   writeServiceConfig,
 } = require("./server");
+const { isPendingHumanAction, listHumanActions } = require("./human-input.js");
 
 test.after(async () => {
   await fs.rm(process.env.SKILLS_API_JOBS_ROOT, { recursive: true, force: true });
@@ -277,6 +278,60 @@ test("vulnerability alert fallback summary satisfies output contract when only s
   assert.match(summary, /generated_by: skills-api fallback/);
   assert.match(summary, /final\.md/);
   await assert.doesNotReject(() => validateRequiredOutputs(job, "vulnerability-alert-processor", "full"));
+});
+
+test("submission fallback summary records failed submit jobs even when submission result is missing", async () => {
+  const job = await createJob({ template: "phase2-cnvd-report" });
+  job.run = {
+    template: "phase2-cnvd-report",
+    options: { mode: "single", serviceConfig: { submit: true } },
+  };
+  await fs.writeFile(path.join(job.paths.output, "form_context.json"), "{}\n", "utf8");
+  await fs.appendFile(
+    path.join(job.paths.logs, "progress.jsonl"),
+    JSON.stringify({
+      time: "2026-05-14T01:48:46.000Z",
+      stage: "captcha",
+      status: "blocked",
+      label: "验证码被防火墙拦截",
+      detail: "CNVD WAF 拦截了 /common/myCodeNew，截图保存到 logs/human-cnvd-firewall.png",
+    }) + "\n",
+    "utf8",
+  );
+
+  const wrote = await writeFallbackSummary(job, "phase2-cnvd-report", {
+    outcome: "failed",
+    error: "template phase2-cnvd-report missing required outputs: output/summary.txt, output/submission-result.json",
+    mode: "single",
+    force: true,
+  });
+  const summary = await fs.readFile(path.join(job.paths.output, "summary.txt"), "utf8");
+
+  assert.equal(wrote, true);
+  assert.match(summary, /generated_by: skills-api fallback/);
+  assert.match(summary, /form_context\.json/);
+  assert.match(summary, /验证码被防火墙拦截/);
+  await assert.rejects(
+    () => validateRequiredOutputs(job, "phase2-cnvd-report", "single"),
+    /output\/submission-result\.json/,
+  );
+});
+
+test("blocked CNVD firewall progress is exposed as pending human action", async () => {
+  const job = await createJob({ template: "phase2-cnvd-report" });
+  const event = {
+    time: "2026-05-14T01:48:46.000Z",
+    stage: "captcha",
+    status: "blocked",
+    label: "验证码被防火墙拦截",
+    detail: "CNVD WAF 拦截了 /common/myCodeNew，日志截图保存到 logs/human-cnvd-firewall.png",
+  };
+  await fs.appendFile(path.join(job.paths.logs, "progress.jsonl"), JSON.stringify(event) + "\n", "utf8");
+
+  assert.equal(isPendingHumanAction(event), true);
+  const actions = await listHumanActions(job);
+  assert.equal(actions.length, 1);
+  assert.equal(actions[0].label, "验证码被防火墙拦截");
 });
 
 test("successful job status normalizes legacy completed to succeeded", () => {

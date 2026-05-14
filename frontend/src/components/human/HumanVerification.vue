@@ -12,8 +12,9 @@ const isSubmitting = ref(false)
 
 const currentJob = computed(() => jobStore.currentJob)
 const hasPendingVerification = computed(
-  () => currentJob.value?.status === 'running' && (currentJob.value.actions?.length || 0) > 0
+  () => (currentJob.value?.actions?.length || 0) > 0
 )
+const canSubmitHumanInput = computed(() => currentJob.value?.status === 'running')
 
 const pendingActions = computed(() => currentJob.value?.actions || [])
 
@@ -30,7 +31,7 @@ function screenshotUrl(action: Record<string, any>) {
 }
 
 async function submitVerification() {
-  if (!currentJob.value || !inputValue.value) return
+  if (!currentJob.value || !inputValue.value || !canSubmitHumanInput.value) return
 
   isSubmitting.value = true
   try {
@@ -49,7 +50,9 @@ async function submitVerification() {
 <template>
   <div v-if="hasPendingVerification" class="human-verification">
     <h3>人工验证</h3>
-    <p class="description">任务需要人工验证才能继续。</p>
+    <p class="description">
+      {{ canSubmitHumanInput ? '任务需要人工验证才能继续。' : '任务已停止，请重新运行后再提交人工验证码。' }}
+    </p>
 
     <ul v-if="pendingActions.length" class="action-list">
       <li v-for="action in pendingActions" :key="`${action.time}-${action.stage}`">
@@ -67,7 +70,7 @@ async function submitVerification() {
     <div class="verification-form">
       <label>
         验证类型
-        <select v-model="verificationType">
+        <select v-model="verificationType" :disabled="!canSubmitHumanInput">
           <option value="captcha">验证码</option>
           <option value="confirmation">确认</option>
         </select>
@@ -79,11 +82,12 @@ async function submitVerification() {
           v-model="inputValue"
           type="text"
           :placeholder="verificationType === 'captcha' ? '请输入验证码' : '请输入确认内容'"
+          :disabled="!canSubmitHumanInput"
           @keyup.enter="submitVerification"
         />
       </label>
 
-      <button type="button" :disabled="!inputValue || isSubmitting" @click="submitVerification">
+      <button type="button" :disabled="!inputValue || isSubmitting || !canSubmitHumanInput" @click="submitVerification">
         {{ isSubmitting ? '提交中...' : '提交验证' }}
       </button>
     </div>

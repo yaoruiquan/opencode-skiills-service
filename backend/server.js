@@ -21,7 +21,12 @@ const CANCEL_MARKER = "cancel-requested.json";
 const USE_DETERMINISTIC_ADAPTERS = process.env.SKILLS_API_USE_ADAPTERS === "true";
 const SUCCESS_STATUS = "succeeded";
 const LEGACY_SUCCESS_STATUS = "completed";
-const SUMMARY_FALLBACK_TEMPLATES = new Set(["vulnerability-alert-processor"]);
+const SUMMARY_FALLBACK_TEMPLATES = new Set([
+  "vulnerability-alert-processor",
+  "phase2-cnvd-report",
+  "phase2-cnnvd-report",
+  "phase2-ncc-report",
+]);
 
 // ── Module imports ─────────────────────────────────────────────────────────
 
@@ -534,9 +539,11 @@ function verificationInstructions(job, template) {
       '- 随后追加进度：{"stage":"captcha","status":"warning","label":"等待人工防火墙验证码","detail":"截图已保存至 logs/human-cnvd-firewall.png，请在前端输入验证码。"}',
       "- 如果 phase2-cnvd-report 的 browser_helpers.open_captcha_tab_command 返回 CNVD_CAPTCHA_IMAGE_BROKEN，说明 /common/myCodeNew 被防火墙验证码拦截或提交验证码图片加载失败，也必须走上述前端人工防火墙验证码流程。",
       "- 如果 submit-captcha 返回 INVALID_OCR_TEXT，说明 OCR 识别到了页面占位文字，禁止提交该值，必须重新获取真实验证码或进入防火墙人工处理。",
-      '- 写入进度后暂停轮询 input/human-input.json；不要创建空的占位 human-input.json。',
+      "- 禁止在 OpenCode 回复中只询问用户如何处理后就退出；必须留在任务内等待 input/human-input.json。",
+      '- 写入进度后暂停轮询 input/human-input.json；不要创建空的占位 human-input.json；每 3 秒检查一次，至少等待 10 分钟。',
       '- 只有读到 status="submitted" 且 value/code/text/captcha_value 任一字段非空，才认为前端已提交验证码。',
       "- 读到验证码后填入防火墙验证码输入框并提交，然后继续原 skill 上报流程。",
+      "- 如果等待超时或无法继续，必须写入 output/summary.txt，说明正在等待/已等待人工防火墙验证码、截图路径和失败原因。",
       "",
     ].join("\n");
   }

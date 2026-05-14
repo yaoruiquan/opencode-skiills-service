@@ -113,7 +113,7 @@ async function listHumanActions(job) {
       .map((line) => {
         try {
           const parsed = JSON.parse(line);
-          if (parsed.status === "warning" && parsed.label?.includes("等待人工")) {
+          if (isPendingHumanAction(parsed)) {
             const actionAt = parsed.time ? Date.parse(parsed.time) : 0;
             if (submitted?.status === "submitted" && submittedAt >= actionAt) return null;
             return {
@@ -134,10 +134,23 @@ async function listHumanActions(job) {
   }
 }
 
+function isPendingHumanAction(event = {}) {
+  const status = String(event.status || "").toLowerCase();
+  const text = [event.stage, event.label, event.detail, event.warning]
+    .filter(Boolean)
+    .join(" ");
+
+  if (!["warning", "blocked", "waiting"].includes(status)) return false;
+  if (/等待人工|人工.*验证码|human-input|human-cnvd-firewall/i.test(text)) return true;
+  if (/防火墙|WAF|Cloudflare|Turnstile|验证码保护|CNVD_CAPTCHA_IMAGE_BROKEN/i.test(text)) return true;
+  return false;
+}
+
 module.exports = {
   maskHumanInputValue,
   redactSensitiveText,
   readHumanInput,
   writeHumanInput,
   listHumanActions,
+  isPendingHumanAction,
 };
