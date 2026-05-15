@@ -48,11 +48,17 @@ export const useJobStore = defineStore('job', () => {
     }
   }
 
-  async function loadJob(jobId: string) {
+  async function loadJob(
+    jobId: string,
+    options: { select?: boolean; onlyIfCurrent?: boolean } = {}
+  ) {
     try {
+      const shouldSelect = options.select !== false
       const response = await api.get(`/jobs/${jobId}`)
-      currentJob.value = response
       upsertJob(response)
+      if (shouldSelect && (!options.onlyIfCurrent || currentJob.value?.id === jobId)) {
+        currentJob.value = response
+      }
       return response
     } catch (e) {
       error.value = 'Failed to load job'

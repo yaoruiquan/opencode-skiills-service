@@ -969,8 +969,8 @@ async function runJobAttemptsInner(jobId, prompt, models, body) {
 
       if (retry > 0) await sleep(CAPACITY_RETRY_DELAY_MS);
 
-      const active = { model, attempt: index, retry, startedAt: now(), child: null };
-      ACTIVE_RUNS.set(jobId, { ...active, adapter: false });
+      const active = { model, attempt: index, retry, startedAt: now(), child: null, adapter: false };
+      ACTIVE_RUNS.set(jobId, active);
 
       const stdoutPath = job.paths.logs + "/run.jsonl";
       const stderrPath = job.paths.logs + "/stderr.log";

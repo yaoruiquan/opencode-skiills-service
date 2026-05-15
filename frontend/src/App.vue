@@ -37,7 +37,7 @@ onMounted(async () => {
     const currentJobId = jobStore.currentJob?.id
     if (!hasRunningJob && jobStore.currentJob?.status !== 'running') return
     try {
-      if (currentJobId) await jobStore.loadJob(currentJobId)
+      if (currentJobId) await jobStore.loadJob(currentJobId, { onlyIfCurrent: true })
       await jobStore.loadJobs()
     } catch (error) {
       console.error('Failed to refresh jobs:', error)
