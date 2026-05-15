@@ -173,7 +173,8 @@ const TEMPLATES = {
       successFields: ["cnvd_id", "submission_id", "submission_url"],
       failureOutput: "summary.txt",
       browserProfile: "docker-chrome-profiles/cnvd-report",
-      captchaPolicy: "CNVD 防火墙/WAF 访问验证码先使用 skill 内 captcha_ocr.py 自动识别，最多尝试 3 次；3 次仍未通过或无法取得真实验证码图片时再切换前端人工。登录验证码和提交验证码也优先使用 skill 内 captcha_ocr.py。",
+      captchaPolicy: "CNVD 防火墙/WAF 访问验证码先使用 skill 内 captcha_ocr.py 自动识别，最多尝试 3 次；3 次仍未通过或无法取得真实验证码图片时再切换前端人工。登录验证码和提交验证码也优先使用 skill 内 captcha_ocr.py；普通验证码只允许截图验证码图片元素本体。",
+      attachmentPolicy: "CNVD 附件上传必须按 attachment_prepare_command -> MCP upload_file -> attachment_verify_command 执行；verify 非 ok=true 时立即失败，不允许 JS DataTransfer/fetch 构造文件。",
     },
     outputGroups: [
       { key: "result", label: "上报结果", icon: "✅", patterns: ["submission-result.json", "batch-state.json"] },

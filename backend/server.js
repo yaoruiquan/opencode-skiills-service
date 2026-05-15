@@ -521,9 +521,13 @@ function serviceContractInstructions(template, definition = {}) {
   if (contract.captchaPolicy) {
     lines.push(`- 验证码策略：${contract.captchaPolicy}`);
   }
+  if (contract.attachmentPolicy) {
+    lines.push(`- 附件策略：${contract.attachmentPolicy}`);
+  }
   if (template === "phase2-cnvd-report") {
     lines.push(
       "- CNVD 成功判定：只要平台页面或结果文件出现 CNVD-C-YYYY-NNNNNN 和 submission_url，即使后续 job 被取消，也必须保留 output/submission-result.json 的成功状态。",
+      "- CNVD 附件上传强约束：必须先执行 form_context.json.browser_helpers.attachment_prepare_command，上传后必须执行 attachment_verify_command；verify 非 ok=true 时立即写 output/summary.txt 后停止，不要继续验证码或提交。",
     );
   }
   return lines.join("\n") + "\n";
@@ -537,6 +541,13 @@ function promptConfigForDisplay(configService) {
 function verificationInstructions(job, template) {
   if (template === "phase2-cnvd-report") {
     return [
+      "CNVD 浏览器阶段防漂移规则：",
+      "- 附件上传必须按 form_context.json.browser_helpers.attachment_prepare_command -> MCP upload_file -> attachment_verify_command 顺序执行。",
+      "- attachment_prepare_command 会标记当前可见附件 input；MCP upload_file 只能上传 form_context.json.attachment_zip_path，禁止上传到未标记 input。",
+      "- attachment_verify_command 必须返回 ok=true 且 fileName 等于 attachment_zip_path 的 basename，才允许进入验证码阶段。",
+      "- 如 attachment_verify_command 返回 CNVD_ATTACHMENT_FILE_EMPTY / CNVD_ATTACHMENT_FILE_MISMATCH / CNVD_ATTACHMENT_FILE_INVALID_TYPE / 任意 ok=false，必须写 output/summary.txt 说明失败原因并停止。",
+      "- 禁止为了绕过附件上传失败而使用 JS DataTransfer、fetch('/tmp/...')、fetch('http://localhost:...')、构造 File 对象或上传 test.png。",
+      "",
       "验证码处理规则：",
       "- CNVD 防火墙/WAF 访问验证码不要直接切换人工；识别特征包括页面标题或正文出现“本站开启了验证码保护”“请输入验证码，以继续访问”“防火墙”“WAF”。",
       "- 遇到 CNVD 防火墙/WAF 访问验证码时，先用 OCR 自动识别，最多尝试 3 次。每次必须截取真实验证码 img 元素本体到 /tmp/cnvd-waf-captcha-<attempt>.png，再调用 skill 内 scripts/captcha_ocr.py --preprocess cnvd 识别。",
@@ -548,6 +559,7 @@ function verificationInstructions(job, template) {
       '- 切换人工时追加进度：{"stage":"captcha","status":"warning","label":"等待人工防火墙验证码","detail":"OCR 已尝试 3 次仍未通过，截图已保存至 logs/human-cnvd-firewall.png，请在前端输入验证码。"}',
       "- 如果 phase2-cnvd-report 的 browser_helpers.open_captcha_tab_command 返回 CNVD_CAPTCHA_IMAGE_BROKEN，说明 /common/myCodeNew 被防火墙验证码拦截或提交验证码图片加载失败；先按防火墙验证码 OCR 规则尝试识别当前 WAF 页面验证码，最多 3 次，仍未通过再前端人工。",
       "- 如果 submit-captcha 返回 INVALID_OCR_TEXT，说明 OCR 识别到了页面占位文字，禁止提交该值，必须重新获取真实验证码或进入防火墙人工处理。",
+      "- 普通登录验证码和提交验证码只允许截图验证码图片元素本体；MCP take_screenshot 不带 uid 时视为整页/视口截图，禁止送入 captcha_ocr.py。",
       "- 禁止在 OpenCode 回复中只询问用户如何处理后就退出；必须留在任务内等待 input/human-input.json。",
       '- 写入进度后暂停轮询 input/human-input.json；不要创建空的占位 human-input.json；每 3 秒检查一次，至少等待 10 分钟。',
       '- 只有读到 status="submitted" 且 value/code/text/captcha_value 任一字段非空，才认为前端已提交验证码。',

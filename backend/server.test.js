@@ -181,6 +181,8 @@ test("submission prompt includes service contract and state machine", async () =
   assert.match(prompt, /禁止重写、覆盖或伪造 input\/service-config\.json/);
   assert.match(prompt, /CNVD 防火墙\/WAF 访问验证码先使用 skill 内 captcha_ocr\.py 自动识别/);
   assert.match(prompt, /最多尝试 3 次/);
+  assert.match(prompt, /attachment_prepare_command -> MCP upload_file -> attachment_verify_command/);
+  assert.match(prompt, /禁止为了绕过附件上传失败而使用 JS DataTransfer/);
 });
 
 test("msrc template keeps report workflow inside job paths", async () => {
