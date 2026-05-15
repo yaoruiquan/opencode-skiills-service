@@ -93,6 +93,16 @@ const vulnerabilitySourceValue = computed({
   }
 })
 
+const vulnerabilitySourceTextValue = computed({
+  get: () =>
+    String(
+      configStore.templateConfig.source_text || configStore.templateConfig.source_content || ''
+    ),
+  set: (value: string) => {
+    configStore.updateField('source_text', value)
+  }
+})
+
 const vulnerabilityPhaseDescription = computed(() => {
   if (mode.value === 'archive-template' || mode.value === 'browser-template') {
     return '阶段一只操作 MMM 平台：检索或新增档案、补齐字段、保存验证，并下载预警 Word 模版。'
@@ -352,6 +362,8 @@ function hasVulnerabilitySeedConfig(config: Record<string, any>) {
   return Boolean(
     config.source_url ||
       config.advisory_url ||
+      config.source_text ||
+      config.source_content ||
       config.cve ||
       config.vuln_title ||
       config.target_path
@@ -390,8 +402,14 @@ async function runJob() {
       const hasTargetConfig = isVulnerabilityAlert.value
         ? hasVulnerabilitySeedConfig(config)
         : Boolean(config.das_id || config.target_path || config.batch_dir)
-      if (isVulnerabilityAlert.value && mode.value === 'report-only' && !hasExistingFiles && !hasSelectedFiles) {
-        uploadError.value = '阶段二需要先上传下载好的预警模版、vuln-data JSON 或材料目录。'
+      if (
+        isVulnerabilityAlert.value &&
+        mode.value === 'report-only' &&
+        !hasExistingFiles &&
+        !hasSelectedFiles &&
+        !hasTargetConfig
+      ) {
+        uploadError.value = '阶段二需要先上传下载好的预警模版、vuln-data JSON、材料目录，或填写信息来源 URL/文本。'
         window.alert(uploadError.value)
         return
       }
@@ -554,6 +572,14 @@ async function runJob() {
             type="url"
             class="input"
             placeholder="https://vendor.example/advisory 或 NVD/GitHub Advisory 链接"
+          />
+        </label>
+        <label class="vuln-field span-2">
+          信息来源文本
+          <textarea
+            v-model="vulnerabilitySourceTextValue"
+            class="input source-textarea"
+            placeholder="如果没有 URL，或来源内容需要直接指定，可以粘贴漏洞公告、厂商通告、复现说明、安全更新说明等原文。"
           />
         </label>
         <label class="vuln-field">
@@ -997,6 +1023,11 @@ async function runJob() {
 
 .vuln-field .input {
   @apply mt-2 font-normal text-sm;
+}
+
+.source-textarea {
+  min-height: 132px;
+  resize: vertical;
 }
 
 .phase-note {

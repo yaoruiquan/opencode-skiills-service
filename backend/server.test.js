@@ -171,6 +171,28 @@ test("vulnerability alert accepts source url as runnable input", async () => {
   assert.match(prompt, /https:\/\/example\.com\/advisory/);
 });
 
+test("vulnerability alert accepts pasted source text as runnable input", async () => {
+  const job = await createJob({ template: "vulnerability-alert-processor" });
+
+  const prompt = await promptForRun(
+    job,
+    {
+      template: "vulnerability-alert-processor",
+      options: {
+        mode: "report-only",
+        serviceConfig: {
+          source_text: "厂商公告原文：示例产品存在本地权限提升漏洞，影响 1.0 到 1.2。",
+        },
+      },
+    },
+    "vulnerability-alert-processor",
+  );
+
+  assert.match(prompt, /粘贴文本/);
+  assert.match(prompt, /source_text/);
+  assert.match(prompt, /厂商公告原文/);
+});
+
 test("submission templates reject material uploads that only contain system files", async () => {
   const job = await createJob({ template: "phase2-cnvd-report" });
   const materialDir = path.join(job.paths.input, "materials", "DAS-T000001");
@@ -366,6 +388,32 @@ test("vulnerability alert fallback summary satisfies output contract when only s
   assert.match(summary, /generated_by: skills-api fallback/);
   assert.match(summary, /final\.md/);
   await assert.doesNotReject(() => validateRequiredOutputs(job, "vulnerability-alert-processor", "full"));
+});
+
+test("vulnerability alert full mode does not pass when MMM stage is skipped", async () => {
+  const job = await createJob({ template: "vulnerability-alert-processor" });
+  job.status = "succeeded";
+  job.run = {
+    template: "vulnerability-alert-processor",
+    options: { mode: "full" },
+  };
+  await writeJob(job);
+  await fs.writeFile(path.join(job.paths.output, "summary.txt"), "Notes:\n- 阶段一浏览器操作跳过：MMM 验证码 API 503\n", "utf8");
+  await fs.writeFile(path.join(job.paths.output, "vulnerability-alert-output.zip"), "zip\n", "utf8");
+  await fs.writeFile(
+    path.join(job.paths.logs, "progress.jsonl"),
+    JSON.stringify({ stage: "login", status: "failed", label: "登录MMM平台", detail: "验证码API返回503，跳过阶段一" }) + "\n",
+    "utf8",
+  );
+
+  await assert.rejects(
+    () => validateRequiredOutputs(job, "vulnerability-alert-processor", "full"),
+    /MMM 阶段一完成/,
+  );
+
+  const effective = await effectiveJobState(job);
+  assert.equal(effective.effectiveStatus, "failed");
+  assert.equal(effective.effectiveStatusLabel, "部分完成：MMM 阶段一失败");
 });
 
 test("submission fallback summary records failed submit jobs even when submission result is missing", async () => {

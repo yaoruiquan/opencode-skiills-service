@@ -40,7 +40,7 @@ const TEMPLATES = {
     skill: "vulnerability-alert-processor",
     inputMode: "vulnerability-alert",
     requiresInputOrBrief: true,
-    recommendedInputs: ["信息来源 URL", "materials/screenshots/*", "materials/**/*.docx", "materials/vuln-data*.json"],
+    recommendedInputs: ["信息来源 URL 或粘贴文本", "materials/screenshots/*", "materials/**/*.docx", "materials/vuln-data*.json"],
     modes: ["full", "archive-template", "report-only"],
     outputs: ["*.zip", "final.md", "final.docx", "final.pdf", "render_context.json"],
     requiredOutputsByMode: {
@@ -54,6 +54,12 @@ const TEMPLATES = {
         type: "text",
         label: "信息来源 URL",
         help: "漏洞公告、厂商通告、NVD、GitHub Advisory 或其他可追溯来源。",
+        default: "",
+      },
+      source_text: {
+        type: "textarea",
+        label: "信息来源文本",
+        help: "当信息来源不是 URL 时，直接粘贴公告、复现说明、厂商通告或其他原始材料文本。",
         default: "",
       },
       cve: { type: "text", label: "CVE 编号", help: "没有 CVE 时可留空。", default: "" },

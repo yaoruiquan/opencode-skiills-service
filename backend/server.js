@@ -193,6 +193,15 @@ async function effectiveJobState(job) {
       submissionResult: result,
     };
   }
+  const vulnerabilityProblem = await vulnerabilityAlertStageProblem(job).catch(() => null);
+  if (vulnerabilityProblem && isSuccessStatus(job.status)) {
+    return {
+      effectiveStatus: "failed",
+      effectiveStatusLabel: vulnerabilityProblem.label,
+      platformId: "",
+      submissionResult: result,
+    };
+  }
   return {
     effectiveStatus: normalizeJobStatus(job.status),
     effectiveStatusLabel: statusLabel(normalizeJobStatus(job.status)),
@@ -265,11 +274,38 @@ async function validateRequiredOutputsReport(job, template, mode = "") {
     }
   }
 
+  const vulnerabilityProblem = await vulnerabilityAlertStageProblem(job, template, mode);
+  if (vulnerabilityProblem) {
+    required.push(vulnerabilityProblem.required);
+    missing.push(vulnerabilityProblem.required);
+  }
+
   return {
     ...report,
     required,
     missing,
     ok: missing.length === 0,
+  };
+}
+
+async function vulnerabilityAlertStageProblem(job, template = job?.run?.template, mode = job?.run?.options?.mode || "") {
+  if (template !== "vulnerability-alert-processor") return null;
+  if (!["full", "archive-template", "browser-template"].includes(mode)) return null;
+
+  const progress = parseProgressEvents(await readProgress(job).catch(() => ""));
+  const summary = await fsp.readFile(path.join(job.paths.output, "summary.txt"), "utf8").catch(() => "");
+  const failureText = `${summary}\n${progress.map((event) => `${event.stage || ""} ${event.status || ""} ${event.label || ""} ${event.detail || ""}`).join("\n")}`;
+  const stageFailed = progress.some((event) =>
+    ["login", "download_template"].includes(event.stage) &&
+    ["failed", "warning"].includes(event.status) &&
+    /跳过|失败|无法|503|验证码|未完成/.test(`${event.label || ""}${event.detail || ""}`)
+  );
+  const summaryFailed = /阶段一.*(跳过|失败|未完成)|MMM.*(无法登录|验证码 API 503)|模版来自 assets\/word-template\.docx/.test(failureText);
+  if (!stageFailed && !summaryFailed) return null;
+
+  return {
+    required: "MMM 阶段一完成",
+    label: "部分完成：MMM 阶段一失败",
   };
 }
 
@@ -578,7 +614,13 @@ function serviceContractInstructions(template, definition = {}) {
 
 function promptConfigForDisplay(configService) {
   if (!Object.keys(configService).length) return {};
-  return redactObject(configService);
+  const display = redactObject(configService);
+  for (const key of ["source_text", "source_content"]) {
+    if (typeof display[key] === "string" && display[key].length > 500) {
+      display[key] = `${display[key].slice(0, 500)}... [已截断，完整内容见 input/service-config.json]`;
+    }
+  }
+  return display;
 }
 
 function verificationInstructions(job, template) {
@@ -720,7 +762,9 @@ function complexSkillPrompt(job, template, body) {
       "- 如果 mode=report-only，禁止打开 MMM 浏览器；只使用 input/materials 下已上传的 Word 模版、vuln-data JSON、复现截图或 service-config 中的信息来源生成材料。",
       "",
       "漏洞预警输入约定：",
-      "- 信息来源 URL 从 input/service-config.json 的 source_url 或 advisory_url 读取；它是检索和参考资料的首要来源。",
+      "- 信息来源可以是 URL，也可以是用户直接粘贴的文本。",
+      "- 信息来源 URL 从 input/service-config.json 的 source_url 或 advisory_url 读取；信息来源文本从 source_text 或 source_content 读取。",
+      "- 如果 URL 和粘贴文本同时存在，优先以粘贴文本作为用户指定事实源，URL 作为参考来源和追溯链接。",
       "- 复现截图来自 input/materials/screenshots/，支持 png/jpg/jpeg；有截图时最终标题和材料按“已复现”规则处理。",
       "- 如果用户上传了下载好的预警 Word 模版或 vuln-data JSON，优先使用上传文件，不要读取 ~/Downloads 或 macOS 绝对路径。",
       "",
@@ -728,6 +772,7 @@ function complexSkillPrompt(job, template, body) {
       "- 无论任务成功、部分成功还是失败，最后都必须写入 output/summary.txt。",
       "- summary.txt 必须列出已生成文件、缺失文件、是否发布/上传/推送，以及失败原因或人工处理项。",
       "- 不要只写 logs/progress.jsonl；summary.txt 是后端验收和前端失败说明的必需文件。",
+      "- full 或 archive-template 模式下，如果 MMM 登录、档案填写、保存验证或模版下载失败，不允许把任务写成“已完成”；即使阶段二生成了 ZIP，也必须在 progress.jsonl 和 summary.txt 标记阶段一失败或部分完成。",
       "- 阶段二或 full 成功时，必须在 output/ 根目录生成一个 ZIP 包，包含最终 .md、.docx、.pdf、logo 和可选 screenshot；建议命名为 vulnerability-alert-output.zip。",
       "- ZIP 可以通过 scripts/publish_report_files.py --archive-name vulnerability-alert-output.zip 生成；如果上传未启用，则用 Python zipfile 在 output/ 根目录打包，不要只留下散文件。",
       "",
@@ -828,6 +873,8 @@ function hasVulnerabilityAlertSeed(body) {
   return Boolean(
     config.source_url ||
       config.advisory_url ||
+      config.source_text ||
+      config.source_content ||
       config.cve ||
       config.vuln_title ||
       config.target_path,
