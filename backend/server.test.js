@@ -75,6 +75,23 @@ test("md2wechat template requires input article and owns the prompt", async () =
   assert.match(prompt, /不要上传公众号草稿箱/);
 });
 
+test("md2wechat draft option requires pushing to WeChat draft box", async () => {
+  const job = await createJob({ type: "md2wechat" });
+  await fs.writeFile(path.join(job.paths.input, "article.md"), "# 测试标题\n\n测试正文\n", "utf8");
+
+  const prompt = await promptForRun(
+    job,
+    { template: "md2wechat", options: { serviceConfig: { wechat_draft: true } } },
+    "md2wechat",
+  );
+
+  assert.match(prompt, /推送到微信公众号草稿箱/);
+  assert.match(prompt, /wechat_draft=true/);
+  assert.match(prompt, /create_alert_draft\.py/);
+  assert.match(prompt, /wechat-draft-result\.json/);
+  assert.doesNotMatch(prompt, /不要上传公众号草稿箱/);
+});
+
 test("md2wechat prompt writes outputs under the job directories", async () => {
   const job = await createJob({ template: "md2wechat" });
   const prompt = md2wechatPrompt(job);
@@ -82,6 +99,24 @@ test("md2wechat prompt writes outputs under the job directories", async () => {
   assert.match(prompt, new RegExp(`${job.paths.input.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}.*article\\.md`));
   assert.match(prompt, new RegExp(`${job.paths.output.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}.*wechat-cover\\.png`));
   assert.match(prompt, new RegExp(`${job.paths.logs.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}.*render_wechat_article\\.json`));
+});
+
+test("md2wechat draft mode requires draft result output", async () => {
+  const job = await createJob({ template: "md2wechat" });
+  job.run = {
+    template: "md2wechat",
+    options: { mode: "single", serviceConfig: { wechat_draft: true } },
+  };
+  await fs.writeFile(path.join(job.paths.output, "wechat-article.html"), "<p>ok</p>\n", "utf8");
+  await fs.writeFile(path.join(job.paths.output, "wechat-cover.png"), "png", "utf8");
+
+  await assert.rejects(
+    () => validateRequiredOutputs(job, "md2wechat", "single"),
+    /output\/wechat-draft-result\.json/,
+  );
+
+  await fs.writeFile(path.join(job.paths.output, "wechat-draft-result.json"), "{\"success\":true,\"media_id\":\"draft\"}\n", "utf8");
+  await assert.doesNotReject(() => validateRequiredOutputs(job, "md2wechat", "single"));
 });
 
 test("complex templates require uploaded input files or a task brief", async () => {

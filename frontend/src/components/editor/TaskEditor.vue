@@ -73,7 +73,9 @@ const runButtonLabel = computed(() => {
   ) {
     return '开始上报'
   }
-  if (selectedTemplate.value === 'md2wechat') return '开始转换'
+  if (selectedTemplate.value === 'md2wechat') {
+    return configStore.templateConfig.wechat_draft ? '生成并推送草稿' : '开始转换'
+  }
   if (selectedTemplate.value === 'phase1-material-processor') return '开始整理'
   return '开始执行'
 })

@@ -21,11 +21,15 @@ const TEMPLATES = {
     skill: "md2wechat",
     inputMode: "markdown",
     requiredInputs: ["article.md"],
-    outputs: ["wechat-article.html", "wechat-cover.png"],
+    outputs: ["wechat-article.html", "wechat-cover.png", "wechat-draft-result.json"],
     requiredOutputs: ["wechat-article.html", "wechat-cover.png"],
+    configSchema: {
+      wechat_draft: false,
+    },
     outputGroups: [
       { key: "article", label: "公众号正文", icon: "📄", patterns: ["wechat-article.html"] },
       { key: "cover", label: "预警封面图", icon: "🖼️", patterns: ["wechat-cover.png", "*.png", "*.jpg"] },
+      { key: "draft", label: "草稿箱结果", icon: "✅", patterns: ["wechat-draft-result.json", "wechat-draft-payload.json"] },
       { key: "other", label: "其他文件", icon: "📁", patterns: ["*"] },
     ],
   },

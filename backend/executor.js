@@ -146,7 +146,7 @@ async function promptForRun(job, body, template, { md2wechatPrompt, complexSkill
 
   if (body.prompt) return body.prompt;
 
-  if (template === "md2wechat") return md2wechatPrompt(job);
+  if (template === "md2wechat") return md2wechatPrompt(job, body);
 
   return complexSkillPrompt(job, template, body);
 }

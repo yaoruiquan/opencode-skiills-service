@@ -22,6 +22,7 @@ const USE_DETERMINISTIC_ADAPTERS = process.env.SKILLS_API_USE_ADAPTERS === "true
 const SUCCESS_STATUS = "succeeded";
 const LEGACY_SUCCESS_STATUS = "completed";
 const SUMMARY_FALLBACK_TEMPLATES = new Set([
+  "md2wechat",
   "vulnerability-alert-processor",
   "phase2-cnvd-report",
   "phase2-cnnvd-report",
@@ -149,6 +150,14 @@ function shouldRequireSubmissionResult(job, template) {
   return job?.run?.options?.serviceConfig?.submit === true || job?.run?.options?.submit === true;
 }
 
+function shouldRequireWechatDraftResult(job, template) {
+  if (template !== "md2wechat") return false;
+  return job?.run?.options?.serviceConfig?.wechat_draft === true ||
+    job?.run?.options?.serviceConfig?.wechat_draft === "true" ||
+    job?.run?.options?.wechat_draft === true ||
+    job?.run?.options?.wechat_draft === "true";
+}
+
 function platformIdFromSubmissionResult(result = {}) {
   return result.cnvd_id || result.cnvdId ||
     result.cnnvd_id || result.cnnvdId ||
@@ -246,6 +255,13 @@ async function validateRequiredOutputsReport(job, template, mode = "") {
     required.push("submission-result.json");
     if (!files.some((file) => matchesOutputPattern(file.path, "submission-result.json"))) {
       missing.push("submission-result.json");
+    }
+  }
+
+  if (shouldRequireWechatDraftResult(job, template)) {
+    required.push("wechat-draft-result.json");
+    if (!files.some((file) => matchesOutputPattern(file.path, "wechat-draft-result.json"))) {
+      missing.push("wechat-draft-result.json");
     }
   }
 
@@ -428,24 +444,37 @@ function defaultPrompt(job) {
   return `请根据输入目录中的材料，完成任务。\n\n输入目录：${job.paths.input}\n输出目录：${job.paths.output}\n日志目录：${job.paths.logs}`;
 }
 
-function md2wechatPrompt(job) {
+function md2wechatPrompt(job, body = {}) {
   const articlePath = path.join(job.paths.input, "article.md");
   const htmlPath = path.join(job.paths.output, "wechat-article.html");
   const coverPath = path.join(job.paths.output, "wechat-cover.png");
+  const metaPath = `${htmlPath}.meta.json`;
+  const draftPayloadPath = path.join(job.paths.output, "wechat-draft-payload.json");
+  const draftResultPath = path.join(job.paths.output, "wechat-draft-result.json");
   const htmlLogPath = path.join(job.paths.logs, "render_wechat_article.json");
   const coverLogPath = path.join(job.paths.logs, "render_alert_cover.json");
+  const draftLogPath = path.join(job.paths.logs, "wechat_draft.json");
   const skillDir = path.join(SKILL_ROOT, "md2wechat");
+  const config = serviceConfig(body);
+  const createDraft = config.wechat_draft === true || config.wechat_draft === "true";
 
-  return [
-    "请严格使用 md2wechat skill 完成本地生成流程，不要上传公众号草稿箱，不要打开浏览器。",
+  const lines = [
+    createDraft
+      ? "请严格使用 md2wechat skill 生成公众号 HTML 和封面，并推送到微信公众号草稿箱；不要打开浏览器。"
+      : "请严格使用 md2wechat skill 完成本地生成流程，不要上传公众号草稿箱，不要打开浏览器。",
     "",
     "固定路径：",
     `- skill 目录：${skillDir}`,
     `- 输入 Markdown：${articlePath}`,
     `- 输出 HTML：${htmlPath}`,
     `- 输出封面：${coverPath}`,
+    `- HTML 元数据：${metaPath}`,
+    `- 草稿请求 JSON：${draftPayloadPath}`,
+    `- 草稿结果 JSON：${draftResultPath}`,
     `- HTML 生成日志：${htmlLogPath}`,
     `- 封面生成日志：${coverLogPath}`,
+    `- 草稿推送日志：${draftLogPath}`,
+    `- 服务配置文件：${path.join(job.paths.input, "service-config.json")}`,
     "",
     "执行要求：",
     `1. 读取 ${articlePath} 获取文章内容`,
@@ -453,8 +482,22 @@ function md2wechatPrompt(job) {
     "3. 调用 scripts/render_alert_cover.py 生成预警封面图",
     `4. HTML 写入 ${htmlPath}，封面写入 ${coverPath}`,
     `5. 关键脚本结果分别记录到 ${htmlLogPath} 和 ${coverLogPath}`,
-    '4. 完成后在输出目录写入 summary.txt，包含文件列表和生成状态',
-  ].join("\n");
+  ];
+
+  if (createDraft) {
+    lines.push(
+      "6. 由于 service-config.json 中 wechat_draft=true，生成 HTML 和封面后必须继续推送微信公众号草稿箱，不能停在本地生成阶段。",
+      `7. 使用 scripts/create_alert_draft.py 创建草稿，命令必须包含 --metadata ${metaPath} --draft-json ${draftPayloadPath} --result-json ${draftResultPath} --create --json。`,
+      `8. 草稿推送 stdout/stderr 和返回 JSON 必须记录到 ${draftLogPath}，并把完整机器可读结果写入 ${draftResultPath}。`,
+      "9. 如果微信接口返回 IP 白名单、access_token、凭据、素材上传或草稿创建错误，必须保留 wechat-draft-result.json，并在 summary.txt 写明失败原因；不要把本地生成成功误报为草稿已推送。",
+      "10. 只有 wechat-draft-result.json 中 success=true 且包含 media_id 或 create_draft_result 才视为草稿推送成功。",
+    );
+  } else {
+    lines.push("6. service-config.json 中 wechat_draft 不是 true，只生成本地 HTML 和封面，不上传公众号草稿箱。");
+  }
+
+  lines.push("11. 完成后在输出目录写入 summary.txt，包含文件列表、本地生成状态和草稿推送状态。");
+  return lines.join("\n");
 }
 
 function progressInstructions(job, template, definition) {
@@ -711,7 +754,7 @@ async function promptForRun(job, body, template) {
 
   if (body.prompt) throw new Error(`template ${template} does not accept a custom prompt`);
 
-  if (template === "md2wechat") return md2wechatPrompt(job);
+  if (template === "md2wechat") return md2wechatPrompt(job, body);
 
   if (TEMPLATES[template]) {
     const prompt = complexSkillPrompt(job, template, body);
