@@ -14,7 +14,7 @@ export interface Template {
 }
 
 export interface ConfigField {
-  type: 'text' | 'number' | 'boolean' | 'select'
+  type: 'text' | 'textarea' | 'number' | 'boolean' | 'select'
   label: string
   help?: string
   default?: any

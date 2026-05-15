@@ -108,11 +108,11 @@ const TEMPLATES = {
   "msrc-vulnerability-report": {
     name: "msrc-vulnerability-report",
     label: "MSRC 预警报告",
-    description: "处理 MSRC 安全更新材料包，生成 report.md、Word、PDF，并可选发布预览和钉钉通知。",
+    description: "处理 MSRC 安全更新材料包，并用粘贴的 CVSS>=9.0 漏洞描述补全 report.md 后生成 Word/PDF。",
     skill: "msrc-vulnerability-report",
     inputMode: "directory",
     requiresInputOrBrief: true,
-    recommendedInputs: ["materials/", "critical-descriptions.json", "logo.png"],
+    recommendedInputs: ["materials/*.json", "materials/*.csv", "materials/logo.png", "CVSS>=9.0 漏洞描述文本"],
     modes: ["generate", "format-only", "publish"],
     outputs: ["report.md", "report.docx", "report.pdf", "preview.html", "summary.txt"],
     requiredOutputsByMode: {
@@ -121,10 +121,26 @@ const TEMPLATES = {
       publish: ["summary.txt", "report.md", "report.docx"],
     },
     configSchema: {
-      month: "",
-      require_critical_descriptions: true,
-      publish: false,
-      dingtalk_notify: false,
+      month: {
+        type: "text",
+        label: "报告月份",
+        help: "例如 5月；留空时从 MSRC 材料包标题自动判断。",
+        default: "",
+      },
+      critical_descriptions: {
+        type: "textarea",
+        label: "CVSS>=9.0 漏洞描述",
+        help: "粘贴真实漏洞描述，推荐格式：CVE-2026-0001：该漏洞可导致...",
+        default: "",
+      },
+      require_critical_descriptions: {
+        type: "boolean",
+        label: "要求严重漏洞描述",
+        help: "开启后，CVSS>=9.0 漏洞缺少描述会停止生成。",
+        default: true,
+      },
+      publish: { type: "boolean", label: "发布预览/下载链接", default: false },
+      dingtalk_notify: { type: "boolean", label: "钉钉通知", default: false },
     },
     outputGroups: [
       { key: "summary", label: "执行摘要", icon: "📋", patterns: ["summary.txt"] },

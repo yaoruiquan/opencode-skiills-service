@@ -32,6 +32,7 @@ const isXmlFileInput = computed(() => selectedTemplate.value === 'cnvd-weekly-db
 const isVulnerabilityAlert = computed(
   () => selectedTemplate.value === 'vulnerability-alert-processor'
 )
+const isMsrcReport = computed(() => selectedTemplate.value === 'msrc-vulnerability-report')
 
 const hasMaterials = computed(() => {
   const inputMode = currentTemplate.value?.inputMode
@@ -111,6 +112,13 @@ const vulnerabilityPhaseDescription = computed(() => {
     return '阶段二不打开 MMM 平台：使用已上传的模版、vuln-data 和截图生成 Markdown、Word、PDF，并打包 ZIP。'
   }
   return '完整流程会先完成 MMM 档案填写和模版下载，再生成预警材料 ZIP。'
+})
+
+const msrcCriticalDescriptionsValue = computed({
+  get: () => String(configStore.templateConfig.critical_descriptions || ''),
+  set: (value: string) => {
+    configStore.updateField('critical_descriptions', value)
+  }
 })
 
 const runButtonLabel = computed(() => {
@@ -370,6 +378,10 @@ function hasVulnerabilitySeedConfig(config: Record<string, any>) {
   )
 }
 
+function hasMsrcCriticalDescriptions(config: Record<string, any>) {
+  return Boolean(String(config.critical_descriptions || '').trim())
+}
+
 function modeLabel(item: string) {
   if (isVulnerabilityAlert.value) {
     const labels: Record<string, string> = {
@@ -377,6 +389,14 @@ function modeLabel(item: string) {
       'archive-template': '阶段一：MMM 档案填写',
       'browser-template': '阶段一：MMM 档案填写',
       'report-only': '阶段二：生成材料 ZIP'
+    }
+    return labels[item] || item
+  }
+  if (isMsrcReport.value) {
+    const labels: Record<string, string> = {
+      generate: '生成报告：Markdown + Word/PDF',
+      'format-only': '仅格式化已有 report.md',
+      publish: '生成并发布预览/下载'
     }
     return labels[item] || item
   }
@@ -402,6 +422,20 @@ async function runJob() {
       const hasTargetConfig = isVulnerabilityAlert.value
         ? hasVulnerabilitySeedConfig(config)
         : Boolean(config.das_id || config.target_path || config.batch_dir)
+      if (isMsrcReport.value && !hasExistingFiles && !hasSelectedFiles) {
+        uploadError.value = 'MSRC 预警报告需要先上传材料包目录，至少包含 MSRC JSON 和 CSV。'
+        window.alert(uploadError.value)
+        return
+      }
+      if (
+        isMsrcReport.value &&
+        config.require_critical_descriptions !== false &&
+        !hasMsrcCriticalDescriptions(config)
+      ) {
+        uploadError.value = '请粘贴 CVSS>=9.0 漏洞描述，格式如：CVE-2026-0001：该漏洞可导致...'
+        window.alert(uploadError.value)
+        return
+      }
       if (
         isVulnerabilityAlert.value &&
         mode.value === 'report-only' &&
@@ -639,6 +673,86 @@ async function runJob() {
       <p class="phase-note">{{ vulnerabilityPhaseDescription }}</p>
     </section>
 
+    <section v-else-if="isMsrcReport" class="msrc-flow-panel">
+      <div class="msrc-input-summary">
+        <div>
+          <strong>MSRC 安全更新材料包</strong>
+          <p>上传包含 MSRC JSON、CSV 的完整目录；可带 logo.png。</p>
+        </div>
+        <div>
+          <strong>CVSS&gt;=9.0 漏洞描述</strong>
+          <p>粘贴真实漏洞描述，后端会写入 service-config 供 skill 保存到 /tmp 后补入 report.md。</p>
+        </div>
+      </div>
+
+      <div class="vuln-config-grid">
+        <label class="vuln-field">
+          报告月份
+          <input
+            :value="configStore.templateConfig.month || ''"
+            type="text"
+            class="input"
+            placeholder="例如：5月；可留空自动判断"
+            @input="configStore.updateField('month', ($event.target as HTMLInputElement).value)"
+          />
+        </label>
+        <label class="vuln-field checkbox-field">
+          <span>要求 CVSS&gt;=9.0 描述完整</span>
+          <button
+            type="button"
+            class="mini-toggle"
+            :class="{ active: configStore.templateConfig.require_critical_descriptions !== false }"
+            @click="
+              configStore.updateField(
+                'require_critical_descriptions',
+                configStore.templateConfig.require_critical_descriptions === false
+              )
+            "
+          >
+            {{ configStore.templateConfig.require_critical_descriptions === false ? '关闭' : '开启' }}
+          </button>
+        </label>
+        <label class="vuln-field span-2">
+          CVSS&gt;=9.0 漏洞描述
+          <textarea
+            v-model="msrcCriticalDescriptionsValue"
+            class="input source-textarea"
+            placeholder="推荐格式：
+CVE-2026-0001：该漏洞存在于 Microsoft XXX 组件中，攻击者可在未授权情况下...
+CVE-2026-0002：该漏洞可导致远程代码执行..."
+          />
+        </label>
+        <label class="vuln-field checkbox-field">
+          <span>发布预览/下载链接</span>
+          <button
+            type="button"
+            class="mini-toggle"
+            :class="{ active: Boolean(configStore.templateConfig.publish) }"
+            @click="configStore.updateField('publish', !configStore.templateConfig.publish)"
+          >
+            {{ configStore.templateConfig.publish ? '开启' : '关闭' }}
+          </button>
+        </label>
+        <label class="vuln-field checkbox-field">
+          <span>钉钉通知</span>
+          <button
+            type="button"
+            class="mini-toggle"
+            :class="{ active: Boolean(configStore.templateConfig.dingtalk_notify) }"
+            @click="
+              configStore.updateField('dingtalk_notify', !configStore.templateConfig.dingtalk_notify)
+            "
+          >
+            {{ configStore.templateConfig.dingtalk_notify ? '开启' : '关闭' }}
+          </button>
+        </label>
+      </div>
+
+      <p class="phase-note">
+        生成流程固定为：保存严重漏洞描述 -> 解析材料包生成 report.md -> 生成 Word -> 格式化 Word -> 尽量转换 PDF。
+      </p>
+    </section>
+
     <ConfigForm v-else :template="currentTemplate" />
 
     <section class="input-panel">
@@ -649,6 +763,8 @@ async function runJob() {
             {{
               isVulnerabilityAlert
                 ? '上传下载好的预警模版、vuln-data JSON、补充材料；复现截图可单独上传到 screenshots。'
+                : isMsrcReport
+                  ? '上传 MSRC 材料包目录，至少包含 JSON 和 CSV；CVSS>=9.0 漏洞描述在上方运行配置中粘贴。'
                 : hasMaterials
                 ? '上传目录或追加单个文件，后端会写入当前 job/input/materials。'
                 : isXmlFileInput
@@ -982,6 +1098,29 @@ async function runJob() {
   box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.05);
 }
 
+.msrc-flow-panel {
+  @apply rounded-xl border bg-white p-5;
+  border-color: var(--line);
+  box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.05);
+}
+
+.msrc-input-summary {
+  @apply grid grid-cols-1 lg:grid-cols-2 gap-3;
+}
+
+.msrc-input-summary div {
+  @apply rounded-xl border bg-slate-50 p-4;
+  border-color: var(--line);
+}
+
+.msrc-input-summary strong {
+  @apply block text-sm font-bold text-slate-800;
+}
+
+.msrc-input-summary p {
+  @apply mt-1 text-sm text-slate-500;
+}
+
 .phase-strip {
   @apply grid grid-cols-1 lg:grid-cols-2 gap-3;
 }
@@ -1023,6 +1162,19 @@ async function runJob() {
 
 .vuln-field .input {
   @apply mt-2 font-normal text-sm;
+}
+
+.checkbox-field {
+  @apply flex-row items-center justify-between gap-3;
+}
+
+.mini-toggle {
+  @apply shrink-0 rounded-lg border px-3 py-1.5 text-xs font-bold text-slate-500 transition-colors;
+  border-color: var(--line);
+}
+
+.mini-toggle.active {
+  @apply border-blue-200 bg-blue-50 text-blue-700;
 }
 
 .source-textarea {

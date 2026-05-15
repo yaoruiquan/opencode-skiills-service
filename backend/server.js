@@ -620,6 +620,9 @@ function promptConfigForDisplay(configService) {
       display[key] = `${display[key].slice(0, 500)}... [已截断，完整内容见 input/service-config.json]`;
     }
   }
+  if (typeof display.critical_descriptions === "string" && display.critical_descriptions.length > 500) {
+    display.critical_descriptions = `${display.critical_descriptions.slice(0, 500)}... [已截断，完整内容见 input/service-config.json]`;
+  }
   return display;
 }
 
@@ -745,9 +748,18 @@ function complexSkillPrompt(job, template, body) {
 
   if (template === "msrc-vulnerability-report") {
     parts.push(
-      "请使用 scripts/msrc_main.py 生成报告，再使用 scripts/format_word.py 格式化 Word。",
-      "需要生成 report.md、report.docx，并尽量生成 report.pdf。",
-      "不要读取 ~/Downloads 或 macOS 绝对路径，所有输入都必须来自当前 job 的 input 目录。",
+      "MSRC 输入约定：",
+      "- 材料包必须来自当前 job 的 input/materials/ 目录，至少包含 MSRC JSON 和 CSV，可选 logo.png。",
+      "- 用户粘贴的 CVSS>=9.0 漏洞描述从 input/service-config.json 的 critical_descriptions 读取；不要只从 taskBrief 猜测。",
+      "- critical_descriptions 推荐格式：CVE-2026-0001：该漏洞可导致...；也可为 JSON 对象。",
+      "",
+      "MSRC 执行强约束：",
+      "- 本 skill 不使用浏览器 MCP、Chrome 或 browser profile。",
+      "- 生成 report.md 前，如果 critical_descriptions 非空，必须先写入 /tmp/msrc_critical_descriptions.json，再执行 scripts/critical_descriptions.py save \"<material_package_dir>\" --file /tmp/msrc_critical_descriptions.json。",
+      "- 然后执行 scripts/msrc_main.py \"<material_package_dir>\" --require-critical-descriptions；不能跳过材料包解析步骤。",
+      "- msrc_main.py 生成 report.md 后，再执行 scripts/generate_word_dynamic.py、scripts/format_word.py，并尽量执行 scripts/convert_docx_to_pdf.py。",
+      "- 输出必须复制或写入当前 job 的 output 目录；不要读取 ~/Downloads 或 macOS 绝对路径。",
+      "- 完成后写 output/summary.txt，列出 report.md、Word、PDF、预览/上传状态和任何缺失原因。",
       "",
     );
   }

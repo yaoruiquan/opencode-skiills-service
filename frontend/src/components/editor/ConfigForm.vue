@@ -137,6 +137,15 @@ function resetConfig() {
             @input="updateField(field.key, ($event.target as HTMLInputElement).value)"
           />
 
+          <textarea
+            v-else-if="field.type === 'textarea'"
+            :id="`config-${field.key}`"
+            :value="valueFor(field)"
+            class="input textarea-input"
+            spellcheck="false"
+            @input="updateField(field.key, ($event.target as HTMLTextAreaElement).value)"
+          ></textarea>
+
           <input
             v-else-if="field.type === 'number'"
             :id="`config-${field.key}`"
@@ -225,6 +234,11 @@ function resetConfig() {
 
 .help-text {
   @apply text-xs text-slate-400 mt-1;
+}
+
+.textarea-input {
+  min-height: 112px;
+  resize: vertical;
 }
 
 /* Toggle Switch Styles */

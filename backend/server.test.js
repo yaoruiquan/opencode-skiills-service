@@ -276,13 +276,23 @@ test("msrc template keeps report workflow inside job paths", async () => {
     job,
     {
       template: "msrc-vulnerability-report",
-      options: { mode: "generate", taskBrief: "生成 2026-05 MSRC 预警" },
+      options: {
+        mode: "generate",
+        taskBrief: "生成 2026-05 MSRC 预警",
+        serviceConfig: {
+          critical_descriptions: "CVE-2026-0001：该漏洞可导致远程代码执行。",
+        },
+      },
     },
     "msrc-vulnerability-report",
   );
 
   assert.match(prompt, /msrc-vulnerability-report skill/);
+  assert.match(prompt, /CVSS>=9\.0 漏洞描述/);
+  assert.match(prompt, /critical_descriptions/);
+  assert.match(prompt, /critical_descriptions\.py save/);
   assert.match(prompt, /msrc_main\.py/);
+  assert.match(prompt, /--require-critical-descriptions/);
   assert.match(prompt, /format_word\.py/);
   assert.match(prompt, /report\.pdf/);
   assert.match(prompt, /不要读取 ~\/Downloads 或 macOS 绝对路径/);
