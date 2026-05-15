@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed } from 'vue'
 import { useJobStore } from '../../stores/jobStore'
+import { formatJobRuntime } from '../../utils/formatters'
 import type { Job } from '../../types'
 
 const props = defineProps<{
@@ -43,6 +44,7 @@ const statusText = computed(
     props.job.effectiveStatusLabel ||
     displayStatus.value
 )
+const runtimeText = computed(() => formatJobRuntime(props.job, jobStore.nowMs))
 
 function selectJob() {
   jobStore.loadJob(props.job.id)
@@ -77,6 +79,7 @@ async function deleteJob(event: MouseEvent) {
     <div class="job-info">
       <div class="job-title">{{ job.title || '未命名任务' }}</div>
       <div class="job-template">{{ job.template }}</div>
+      <div class="job-runtime">{{ runtimeText }}</div>
       <div v-if="platformId" class="platform-id">{{ platformId }}</div>
       <div class="job-id">{{ job.id }}</div>
       <div class="job-time">
@@ -153,6 +156,13 @@ async function deleteJob(event: MouseEvent) {
 .job-template {
   @apply mt-1 truncate text-xs;
   color: var(--ink-muted);
+}
+
+.job-runtime {
+  @apply mt-2 inline-flex w-fit rounded border px-2 py-0.5 text-xs font-semibold;
+  color: var(--brand);
+  border-color: var(--brand-soft);
+  background: rgba(15, 118, 110, 0.06);
 }
 
 .job-time {

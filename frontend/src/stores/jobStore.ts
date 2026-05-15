@@ -11,6 +11,7 @@ export const useJobStore = defineStore('job', () => {
   const templates = ref<Record<string, Template>>({})
   const isLoading = ref(false)
   const error = ref<string | null>(null)
+  const nowMs = ref(Date.now())
 
   const filteredJobs = ref<Job[]>([])
   const activeTemplateFilter = ref<string | undefined>(undefined)
@@ -155,12 +156,17 @@ export const useJobStore = defineStore('job', () => {
     error.value = null
   }
 
+  function tickNow() {
+    nowMs.value = Date.now()
+  }
+
   return {
     jobs,
     currentJob,
     templates,
     isLoading,
     error,
+    nowMs,
     filteredJobs,
     runningJobs,
     completedJobs,
@@ -173,6 +179,7 @@ export const useJobStore = defineStore('job', () => {
     deleteJob,
     patchCurrentJob,
     filterJobs,
-    clearError
+    clearError,
+    tickNow
   }
 })

@@ -5,6 +5,7 @@ import { useSSE } from '../../composables/useSSE'
 import OutputFiles from './OutputFiles.vue'
 import LogViewer from './LogViewer.vue'
 import ExecutionTimeline from './ExecutionTimeline.vue'
+import { formatDate, formatJobRuntime } from '../../utils/formatters'
 
 const jobStore = useJobStore()
 
@@ -13,6 +14,9 @@ const activeTab = ref<'events' | 'outputs' | 'logs'>('events')
 const currentJob = computed(() => jobStore.currentJob)
 const hasJob = computed(() => !!currentJob.value)
 const currentJobId = computed(() => currentJob.value?.id || '')
+const runtimeText = computed(() =>
+  currentJob.value ? formatJobRuntime(currentJob.value, jobStore.nowMs) : ''
+)
 const failureReason = computed(() => {
   const job = currentJob.value
   if (!job || !['failed', 'canceled'].includes(job.status)) return ''
@@ -109,6 +113,20 @@ watch(
     </div>
 
     <div class="results-content">
+      <div class="runtime-summary">
+        <div>
+          <span>开始时间</span>
+          <strong>{{ currentJob?.run?.startedAt ? formatDate(currentJob.run.startedAt) : '未开始' }}</strong>
+        </div>
+        <div>
+          <span>结束时间</span>
+          <strong>{{ currentJob?.run?.finishedAt ? formatDate(currentJob.run.finishedAt) : '运行中 / 未结束' }}</strong>
+        </div>
+        <div>
+          <span>执行时间</span>
+          <strong>{{ runtimeText }}</strong>
+        </div>
+      </div>
       <div v-if="failureReason" class="failure-reason">
         <strong>{{ currentJob?.status === 'canceled' ? '中断原因' : '失败原因' }}</strong>
         <span>{{ failureReason }}</span>
@@ -179,6 +197,26 @@ watch(
 
 .results-content {
   @apply min-h-[300px];
+}
+
+.runtime-summary {
+  @apply mb-4 grid grid-cols-1 gap-3 md:grid-cols-3;
+}
+
+.runtime-summary div {
+  @apply rounded-lg border px-4 py-3;
+  border-color: var(--line);
+  background: var(--surface-muted);
+}
+
+.runtime-summary span {
+  @apply block text-xs font-semibold;
+  color: var(--ink-soft);
+}
+
+.runtime-summary strong {
+  @apply mt-1 block truncate text-sm;
+  color: var(--ink);
 }
 
 .failure-reason {

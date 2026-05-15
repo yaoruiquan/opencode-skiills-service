@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { formatSize, formatDate } from '../formatters'
+import { formatSize, formatDate, formatJobRuntime, jobRuntimeSeconds } from '../formatters'
 
 describe('formatters', () => {
   describe('formatSize', () => {
@@ -29,6 +29,36 @@ describe('formatters', () => {
     it('handles invalid dates gracefully', () => {
       const result = formatDate('invalid-date')
       expect(result).toBeDefined()
+    })
+  })
+
+  describe('job runtime formatting', () => {
+    it('formats completed job duration from run timestamps', () => {
+      const job = {
+        status: 'succeeded',
+        run: {
+          startedAt: '2026-05-15T01:00:00.000Z',
+          finishedAt: '2026-05-15T01:02:05.000Z'
+        }
+      }
+
+      expect(jobRuntimeSeconds(job)).toBe(125)
+      expect(formatJobRuntime(job)).toBe('耗时 2分5秒')
+    })
+
+    it('formats running job duration with current time', () => {
+      const job = {
+        status: 'running',
+        run: {
+          startedAt: '2026-05-15T01:00:00.000Z'
+        }
+      }
+
+      expect(formatJobRuntime(job, Date.parse('2026-05-15T01:00:09.000Z'))).toBe('已运行 9秒')
+    })
+
+    it('shows not started when run has not begun', () => {
+      expect(formatJobRuntime({ status: 'created' })).toBe('未开始')
     })
   })
 })

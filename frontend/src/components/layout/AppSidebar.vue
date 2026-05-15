@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed } from 'vue'
 import { useJobStore } from '../../stores/jobStore'
+import { formatJobRuntime } from '../../utils/formatters'
 import JobList from '../jobs/JobList.vue'
 import JobFilters from '../jobs/JobFilters.vue'
 
@@ -9,6 +10,9 @@ const jobStore = useJobStore()
 const currentJob = computed(() => jobStore.currentJob)
 const isRunning = computed(() => currentJob.value?.status === 'running')
 const displayStatus = computed(() => currentJob.value?.effectiveStatus || currentJob.value?.status)
+const runtimeText = computed(() =>
+  currentJob.value ? formatJobRuntime(currentJob.value, jobStore.nowMs) : ''
+)
 const platformId = computed(
   () =>
     currentJob.value?.platformId ||
@@ -78,6 +82,8 @@ function cancelJob() {
           <dd v-if="platformId" class="platform-id">{{ platformId }}</dd>
           <dt>时间</dt>
           <dd>{{ new Date(currentJob.createdAt).toLocaleString() }}</dd>
+          <dt>执行</dt>
+          <dd class="runtime">{{ runtimeText }}</dd>
           <dt>ID</dt>
           <dd class="mono" :title="currentJob.id">{{ currentJob.id }}</dd>
         </dl>
@@ -181,6 +187,11 @@ function cancelJob() {
   color: var(--success);
   border-color: rgba(5, 150, 105, 0.28);
   background: rgba(5, 150, 105, 0.08);
+}
+
+.job-meta .runtime {
+  @apply font-semibold;
+  color: var(--brand);
 }
 
 .empty-state {

@@ -33,6 +33,7 @@ onMounted(async () => {
   }
 
   refreshTimer = window.setInterval(async () => {
+    jobStore.tickNow()
     const hasRunningJob = jobStore.jobs.some((job) => job.status === 'running')
     const currentJobId = jobStore.currentJob?.id
     if (!hasRunningJob && jobStore.currentJob?.status !== 'running') return
