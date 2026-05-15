@@ -325,25 +325,44 @@ async function handleLogin(job, cdp, serviceConfig) {
 }
 
 async function handleProtectionCaptcha(job, cdp) {
-  const maxRetries = 3;
-  for (let attempt = 0; attempt <= maxRetries; attempt++) {
-    if (attempt > 0) {
-      await appendProgress(job.paths, {
-        stage: "captcha",
-        status: "warning",
-        label: `防火墙验证码重试 ${attempt}/${maxRetries}`,
-        detail: "之前的验证码错误，请重新输入。",
-      });
-    }
+  const maxOcrAttempts = 3;
+  for (let attempt = 1; attempt <= maxOcrAttempts; attempt += 1) {
     await clearHumanInput(job);
-    await saveScreenshot(cdp, path.join(job.paths.logs, "captcha-cnvd-protection.png"));
+    const screenshotName = attempt === 1 ? "human-cnvd-firewall.png" : `human-cnvd-firewall-${attempt}.png`;
+    const imageName = `captcha-cnvd-protection-${attempt}.png`;
+    const imagePath = path.join(job.paths.logs, imageName);
+    await saveScreenshot(cdp, path.join(job.paths.logs, screenshotName));
     await appendProgress(job.paths, {
       stage: "captcha",
-      status: "warning",
-      label: "等待人工防火墙验证码",
-      detail: `CNVD 验证码保护页已截图，请在前端输入计算结果或验证码文本。${attempt > 0 ? `第 ${attempt + 1} 次尝试` : ""}`,
+      status: "running",
+      label: `防火墙验证码 OCR 尝试 ${attempt}/${maxOcrAttempts}`,
+      detail: `CNVD 验证码保护页已截图，正在调用 captcha_ocr.py 识别 logs/${imageName}。`,
     });
-    const code = await requestCaptchaCode(job, "captcha-cnvd-protection.png", "防火墙验证码");
+
+    const captured = await saveCaptchaImage(cdp, imagePath);
+    let code = "";
+    if (captured.ok) {
+      const result = await runPython(SKILL_NAME, ["scripts/captcha_ocr.py", imagePath, "--preprocess", "cnvd"], {
+        timeoutMs: 120_000,
+      });
+      code = result.stdout.trim().split(/\r?\n/).pop()?.trim() || "";
+      await writeAdapterLog(job.paths, [
+        `protection captcha: captcha_ocr exit=${result.exitCode} (attempt ${attempt}/${maxOcrAttempts})`,
+        result.stderr ? `protection captcha: captcha_ocr stderr=${result.stderr.trim()}` : "",
+      ].filter(Boolean));
+      if (result.exitCode !== 0 || /^ERROR\b/i.test(code) || isInvalidCaptchaText(code)) {
+        code = "";
+      }
+    } else {
+      await writeAdapterLog(job.paths, [`protection captcha: image capture failed (${captured.reason || "unknown"})`]);
+    }
+
+    if (!code) {
+      await refreshProtectionCaptcha(cdp);
+      await sleep(1500);
+      continue;
+    }
+
     const result = await cdp.evaluateFunction((value) => {
       const inputs = Array.from(document.querySelectorAll("input"))
         .filter((el) => {
@@ -369,7 +388,7 @@ async function handleProtectionCaptcha(job, cdp) {
       return { ok: true };
     }, code);
     if (!result?.ok) {
-      if (attempt < maxRetries) continue;
+      if (attempt < maxOcrAttempts) continue;
       return { ok: false, error: result?.reason || "防火墙验证码提交失败" };
     }
     await sleep(2500);
@@ -383,8 +402,34 @@ async function handleProtectionCaptcha(job, cdp) {
       });
       return { ok: true };
     }
+    await refreshProtectionCaptcha(cdp);
+    await sleep(1500);
   }
-  return { ok: false, error: `${maxRetries + 1} 次防火墙验证码尝试均未通过。` };
+
+  await saveScreenshot(cdp, path.join(job.paths.logs, "human-cnvd-firewall.png"));
+  const code = await requestCaptchaCode(job, "human-cnvd-firewall.png", "防火墙验证码");
+  const result = await cdp.evaluateFunction((value) => {
+    const input = Array.from(document.querySelectorAll("input")).find((el) => {
+      const type = String(el.getAttribute("type") || "text").toLowerCase();
+      const box = el.getBoundingClientRect();
+      return !["hidden", "submit", "button", "checkbox", "radio", "file"].includes(type) && box.width > 0 && box.height > 0;
+    });
+    if (!input) return { ok: false, reason: "未找到防火墙验证码输入框" };
+    input.value = value;
+    input.dispatchEvent(new Event("input", { bubbles: true }));
+    input.dispatchEvent(new Event("change", { bubbles: true }));
+    const submit = Array.from(document.querySelectorAll("button, input[type='submit'], a"))
+      .find((el) => /提交验证码|提交|验证|继续访问/.test(el.innerText || el.value || ""));
+    if (!submit) return { ok: false, reason: "未找到防火墙验证码提交按钮" };
+    submit.click();
+    return { ok: true };
+  }, code);
+  if (!result?.ok) return { ok: false, error: result?.reason || "人工防火墙验证码提交失败" };
+  await sleep(2500);
+  const guard = await checkLoginGuard(cdp);
+  return guard.hasProtectionCaptcha
+    ? { ok: false, error: "人工防火墙验证码提交后仍未通过。" }
+    : { ok: true };
 }
 
 async function resolveProtectionGuard(job, cdp, formContext, mode) {
@@ -582,6 +627,26 @@ async function resolveCaptchaCode(job, cdp, filename, label, maxRetries = 2, cap
   return requestCaptchaCode(job, filename, label);
 }
 
+function isInvalidCaptchaText(value) {
+  const text = String(value || "").trim();
+  return !text || /看不清|点击更换|存在|二进制|验证码/i.test(text);
+}
+
+async function refreshProtectionCaptcha(cdp) {
+  await cdp.evaluate(`(() => {
+    const refresh = Array.from(document.querySelectorAll('a, button, span'))
+      .find((el) => /换一张|看不清/.test(el.innerText || el.value || ''));
+    if (refresh) {
+      refresh.click();
+      return;
+    }
+    const img = document.querySelector('img[alt*="验证码"], img[src^="data:image"], img');
+    if (img && img.src && !img.src.startsWith('data:')) {
+      img.src = img.src.split('?')[0] + '?t=' + Date.now();
+    }
+  })()`).catch(() => {});
+}
+
 async function requestCaptchaCode(job, filename, label = "验证码") {
   await clearHumanInput(job);
   await appendProgress(job.paths, {
@@ -625,7 +690,7 @@ async function saveCaptchaImage(cdp, filePath, captchaId) {
   const result = await cdp.evaluate(`(async (captchaId) => {
     const selectors = captchaId
       ? ['#' + captchaId, '#' + captchaId + ' img']
-      : ['#codeSpan1', '#codeSpan1 img', '#codeSpan', '#codeSpan img', 'img[src*="/common/myCodeNew"]', 'img[src*="myCode"]'];
+      : ['#codeSpan1', '#codeSpan1 img', '#codeSpan', '#codeSpan img', 'img[src*="/common/myCodeNew"]', 'img[src*="myCode"]', 'img[alt*="验证码"]', 'img[src^="data:image"]'];
     const image = selectors.reduce((found, sel) => found || document.querySelector(sel), null);
     if (!image) return { ok: false, reason: '未找到验证码图片元素' };
     const rawSrc = image.currentSrc || image.src || image.getAttribute('src');

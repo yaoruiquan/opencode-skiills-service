@@ -179,7 +179,8 @@ test("submission prompt includes service contract and state machine", async () =
   assert.match(prompt, /服务化执行契约/);
   assert.match(prompt, /prepare -> form_context -> browser -> login/);
   assert.match(prompt, /禁止重写、覆盖或伪造 input\/service-config\.json/);
-  assert.match(prompt, /CNVD 防火墙\/WAF 访问验证码走前端人工/);
+  assert.match(prompt, /CNVD 防火墙\/WAF 访问验证码先使用 skill 内 captcha_ocr\.py 自动识别/);
+  assert.match(prompt, /最多尝试 3 次/);
 });
 
 test("msrc template keeps report workflow inside job paths", async () => {
@@ -205,6 +206,26 @@ test("msrc template keeps report workflow inside job paths", async () => {
 
 test("cnvd weekly template separates check and update modes", async () => {
   const job = await createJob({ template: "cnvd-weekly-db-update" });
+  await assert.rejects(
+    () =>
+      promptForRun(
+        job,
+        {
+          template: "cnvd-weekly-db-update",
+          options: { mode: "check", taskBrief: "检查本周 XML 更新环境" },
+        },
+        "cnvd-weekly-db-update",
+      ),
+    /requires input\/xml\/\*\.xml/,
+  );
+
+  await fs.mkdir(path.join(job.paths.input, "xml"), { recursive: true });
+  await fs.writeFile(
+    path.join(job.paths.input, "xml", "2026-05-04_2026-05-10.xml"),
+    "<root></root>\n",
+    "utf8",
+  );
+
   const prompt = await promptForRun(
     job,
     {
@@ -215,7 +236,8 @@ test("cnvd weekly template separates check and update modes", async () => {
   );
 
   assert.match(prompt, /cnvd-weekly-db-update skill/);
-  assert.match(prompt, /check 模式只检查 input\/xml/);
+  assert.match(prompt, /CNVD 周库更新只处理上传到 input\/xml\/ 下的 \.xml 文件/);
+  assert.match(prompt, /check 模式只检查 input\/xml\/\*\.xml/);
   assert.match(prompt, /update 模式必须同时满足 mode=update/);
   assert.match(prompt, /output\/update-result\.json/);
 });
@@ -592,7 +614,7 @@ test("normal CNVD captcha is not treated as manual firewall verification", () =>
   assert.ok(!events.some((event) => event.label === "等待人工防火墙验证码"));
 });
 
-test("broken CNVD captcha image is surfaced as manual firewall verification", () => {
+test("broken CNVD captcha image first surfaces as firewall OCR", () => {
   const events = parseExecutionEvents(
     JSON.stringify({
       type: "tool_use",
@@ -611,7 +633,8 @@ test("broken CNVD captcha image is surfaced as manual firewall verification", ()
     "",
   );
 
-  assert.ok(events.some((event) => event.label === "等待人工防火墙验证码" && event.status === "warning"));
+  assert.ok(events.some((event) => event.label === "防火墙验证码 OCR" && event.status === "running"));
+  assert.ok(!events.some((event) => event.label === "等待人工防火墙验证码"));
 });
 
 test("invalid CNVD OCR text is surfaced as captcha failure", () => {

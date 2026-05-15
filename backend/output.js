@@ -170,9 +170,9 @@ function inferBusinessEvent(data) {
       time,
       type: "progress",
       stage: "cloudflare",
-      status: "warning",
-      label: "等待人工防火墙验证码",
-      detail: "CNVD 提交验证码图片未加载成功，疑似 /common/myCodeNew 被防火墙验证码拦截，需要前端人工处理。",
+      status: "running",
+      label: "防火墙验证码 OCR",
+      detail: "CNVD 提交验证码图片未加载成功，疑似 /common/myCodeNew 被防火墙验证码拦截，正在先尝试 OCR 识别。",
     };
   }
 
@@ -204,10 +204,10 @@ function inferBusinessEvent(data) {
       time,
       type: "progress",
       stage: wafCaptcha ? "cloudflare" : "captcha",
-      status: wafCaptcha ? "warning" : failed ? "failed" : "running",
-      label: wafCaptcha ? "等待人工防火墙验证码" : "验证码识别",
+      status: failed ? "failed" : "running",
+      label: wafCaptcha ? "防火墙验证码 OCR" : "验证码识别",
       detail: wafCaptcha
-        ? "CNVD 页面进入访问验证码保护，需要前端人工处理后继续。"
+        ? "CNVD 页面进入访问验证码保护，正在先尝试 OCR 识别；连续 3 次未通过后再切换前端人工。"
         : "任务正在调用 skill 内验证码识别脚本处理登录或提交验证码。",
     };
   }

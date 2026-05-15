@@ -538,12 +538,15 @@ function verificationInstructions(job, template) {
   if (template === "phase2-cnvd-report") {
     return [
       "验证码处理规则：",
-      "- 只有 CNVD 防火墙/WAF 访问验证码走前端人工处理，识别特征包括页面标题或正文出现“本站开启了验证码保护”“请输入验证码，以继续访问”“防火墙”“WAF”。",
+      "- CNVD 防火墙/WAF 访问验证码不要直接切换人工；识别特征包括页面标题或正文出现“本站开启了验证码保护”“请输入验证码，以继续访问”“防火墙”“WAF”。",
+      "- 遇到 CNVD 防火墙/WAF 访问验证码时，先用 OCR 自动识别，最多尝试 3 次。每次必须截取真实验证码 img 元素本体到 /tmp/cnvd-waf-captcha-<attempt>.png，再调用 skill 内 scripts/captcha_ocr.py --preprocess cnvd 识别。",
+      "- 每次 OCR 尝试前保存当前防火墙页截图到 logs/human-cnvd-firewall.png 或 logs/human-cnvd-firewall-<attempt>.png，并追加进度：{\"stage\":\"captcha\",\"status\":\"running\",\"label\":\"防火墙验证码 OCR 尝试 1/3\",\"detail\":\"正在识别 CNVD 防火墙验证码。\"}，attempt 按实际次数递增。",
+      "- OCR 结果为空、以 ERROR 开头、包含“看不清/点击更换/存在/二进制/验证码”等页面文字，或提交后仍停留在“本站开启了验证码保护/请输入验证码，以继续访问/验证码已过期”页面，都算本次 OCR 未通过，必须刷新/换一张后重试，不复用旧验证码和旧结果。",
+      "- 3 次 OCR 仍未通过、无法取得真实验证码 img、验证码图片加载失败，或页面只剩占位文字时，才切换前端人工处理。",
       "- CNVD 登录验证码、提交验证码仍必须优先调用 skill 内 scripts/captcha_ocr.py 识别，不要因为普通登录/提交验证码就等待前端人工。",
       "- 其他平台或其他验证码不要切换前端人工，继续按对应 skill 的脚本和说明处理。",
-      "- 遇到 CNVD 防火墙/WAF 访问验证码时，保存截图到 logs/human-cnvd-firewall.png 或 logs/human-cnvd-firewall-*.png。",
-      '- 随后追加进度：{"stage":"captcha","status":"warning","label":"等待人工防火墙验证码","detail":"截图已保存至 logs/human-cnvd-firewall.png，请在前端输入验证码。"}',
-      "- 如果 phase2-cnvd-report 的 browser_helpers.open_captcha_tab_command 返回 CNVD_CAPTCHA_IMAGE_BROKEN，说明 /common/myCodeNew 被防火墙验证码拦截或提交验证码图片加载失败，也必须走上述前端人工防火墙验证码流程。",
+      '- 切换人工时追加进度：{"stage":"captcha","status":"warning","label":"等待人工防火墙验证码","detail":"OCR 已尝试 3 次仍未通过，截图已保存至 logs/human-cnvd-firewall.png，请在前端输入验证码。"}',
+      "- 如果 phase2-cnvd-report 的 browser_helpers.open_captcha_tab_command 返回 CNVD_CAPTCHA_IMAGE_BROKEN，说明 /common/myCodeNew 被防火墙验证码拦截或提交验证码图片加载失败；先按防火墙验证码 OCR 规则尝试识别当前 WAF 页面验证码，最多 3 次，仍未通过再前端人工。",
       "- 如果 submit-captcha 返回 INVALID_OCR_TEXT，说明 OCR 识别到了页面占位文字，禁止提交该值，必须重新获取真实验证码或进入防火墙人工处理。",
       "- 禁止在 OpenCode 回复中只询问用户如何处理后就退出；必须留在任务内等待 input/human-input.json。",
       '- 写入进度后暂停轮询 input/human-input.json；不要创建空的占位 human-input.json；每 3 秒检查一次，至少等待 10 分钟。',
@@ -664,7 +667,8 @@ function complexSkillPrompt(job, template, body) {
 
   if (template === "cnvd-weekly-db-update") {
     parts.push(
-      "check 模式只检查 input/xml 下的 XML 数据和远端环境，不执行写入更新。",
+      "输入要求：CNVD 周库更新只处理上传到 input/xml/ 下的 .xml 文件，不要读取 ~/Downloads 或任意本机绝对路径。",
+      "check 模式只检查 input/xml/*.xml 数据和远端环境，不执行写入更新。",
       "update 模式必须同时满足 mode=update 和配置允许写入后才执行更新。",
       "执行结果必须写入 output/update-result.json。",
       "",
@@ -736,12 +740,22 @@ async function writeServiceConfig(job, template, body) {
 async function ensureTemplateRunRequirements(job, template, body) {
   await ensureTemplateInputs(job, template, TEMPLATES);
   const definition = TEMPLATES[template];
+  if (template === "cnvd-weekly-db-update") {
+    await ensureCnvdWeeklyXmlInput(job);
+  }
   if (definition?.requiresInputOrBrief && !(await hasInputFiles(job)) && !taskBrief(body)) {
     throw new Error(`template ${template} requires uploaded input files or options.taskBrief`);
   }
   if (["phase2-cnvd-report", "phase2-cnnvd-report", "phase2-ncc-report"].includes(template)) {
     await ensureSubmissionMaterials(job, template, body);
   }
+}
+
+async function ensureCnvdWeeklyXmlInput(job) {
+  const files = await listFiles(path.join(job.paths.input, "xml"));
+  const xmlFiles = files.filter((file) => path.extname(file.path).toLowerCase() === ".xml");
+  if (xmlFiles.length > 0) return;
+  throw new Error("template cnvd-weekly-db-update requires input/xml/*.xml");
 }
 
 async function ensureSubmissionMaterials(job, template, body) {

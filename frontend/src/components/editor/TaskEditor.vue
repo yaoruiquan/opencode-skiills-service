@@ -27,11 +27,22 @@ const mode = ref('')
 const lastAutoTitle = ref('')
 
 const currentTemplate = computed(() => jobStore.templates[selectedTemplate.value])
+const isXmlFileInput = computed(() => selectedTemplate.value === 'cnvd-weekly-db-update')
 
 const hasMaterials = computed(() => {
   const inputMode = currentTemplate.value?.inputMode
   return inputMode === 'materials' || inputMode === 'directory' || inputMode === 'directory-zip'
 })
+
+const uploadedXmlFiles = computed(() =>
+  (jobStore.currentJob?.files || [])
+    .filter((file) => file.path.startsWith('xml/') && file.path.toLowerCase().endsWith('.xml'))
+    .sort((a, b) => a.path.localeCompare(b.path, 'zh-CN'))
+)
+
+const validXmlSelected = computed(
+  () => Boolean(markdownFile.value && markdownFile.value.name.toLowerCase().endsWith('.xml'))
+)
 
 const uploadedMaterialFiles = computed(() =>
   (jobStore.currentJob?.files || [])
@@ -136,7 +147,15 @@ async function createJob() {
 
 function onMarkdownFile(event: Event) {
   const input = event.target as HTMLInputElement
-  markdownFile.value = input.files?.[0] || null
+  const file = input.files?.[0] || null
+  if (isXmlFileInput.value && file && !file.name.toLowerCase().endsWith('.xml')) {
+    uploadError.value = 'CNVD 周库更新只能上传 XML 文件。'
+    markdownFile.value = null
+    input.value = ''
+    return
+  }
+  uploadError.value = ''
+  markdownFile.value = file
 }
 
 function onMaterialFiles(event: Event) {
@@ -187,6 +206,21 @@ async function saveMarkdown() {
 
   isSaving.value = true
   try {
+    if (isXmlFileInput.value) {
+      if (!markdownFile.value) {
+        uploadError.value = '请选择 CNVD 周库 XML 文件。'
+        return
+      }
+      const safeName = markdownFile.value.name.split(/[\\/]/).pop() || 'cnvd-weekly.xml'
+      uploadProgress.value = `正在上传 XML：${safeName}`
+      await api.post(`/jobs/${job.id}/files`, {
+        filename: `xml/${safeName}`,
+        contentBase64: await readBase64(markdownFile.value)
+      })
+      uploadProgress.value = `已上传 XML：${safeName}`
+      markdownFile.value = null
+      return
+    }
     const content = markdownFile.value ? await readTextFile(markdownFile.value) : markdown.value
     await api.post(`/jobs/${job.id}/files`, { filename: 'article.md', content })
   } finally {
@@ -251,7 +285,15 @@ async function runJob() {
       }
     }
     if (!hasMaterials.value) {
-      if (markdown.value || markdownFile.value) {
+      if (isXmlFileInput.value) {
+        const hasXml = uploadedXmlFiles.value.length > 0 || validXmlSelected.value
+        if (!hasXml) {
+          uploadError.value = '请先上传 CNVD 周库 XML 文件。'
+          window.alert(uploadError.value)
+          return
+        }
+        if (validXmlSelected.value) await saveMarkdown()
+      } else if (markdown.value || markdownFile.value) {
         await saveMarkdown()
       }
     } else if (validSelectedMaterials.value.length > 0) {
@@ -262,7 +304,7 @@ async function runJob() {
       prompt: selectedTemplate.value === 'custom' ? prompt.value || undefined : undefined,
       options: {
         mode: mode.value || currentTemplate.value?.modes?.[0] || 'single',
-        taskBrief: hasMaterials.value ? taskBrief.value : prompt.value || '',
+        taskBrief: hasMaterials.value || isXmlFileInput.value ? taskBrief.value : prompt.value || '',
         serviceConfig: configStore.templateConfig
       }
     }
@@ -371,12 +413,14 @@ async function runJob() {
     <section class="input-panel">
       <div class="panel-head">
         <div>
-          <h3>{{ hasMaterials ? '输入材料' : '内容输入' }}</h3>
+          <h3>{{ hasMaterials ? '输入材料' : isXmlFileInput ? 'XML 文件' : '内容输入' }}</h3>
           <p>
             {{
               hasMaterials
                 ? '上传目录或追加单个文件，后端会写入当前 job/input/materials。'
-                : '上传或粘贴 article.md 内容。'
+                : isXmlFileInput
+                  ? '上传 CNVD 周库 XML 文件，后端会写入当前 job/input/xml。'
+                  : '上传或粘贴 article.md 内容。'
             }}
           </p>
         </div>
@@ -398,22 +442,22 @@ async function runJob() {
                 <polyline points="17 8 12 3 7 8" />
                 <line x1="12" x2="12" y1="3" y2="15" />
               </svg>
-              选择文件
+              {{ isXmlFileInput ? '选择 XML' : '选择文件' }}
             </label>
             <input
               id="fileInput"
               type="file"
               class="hidden"
-              accept=".md,.markdown,text/markdown,text/plain"
+              :accept="isXmlFileInput ? '.xml,text/xml,application/xml' : '.md,.markdown,text/markdown,text/plain'"
               @change="onMarkdownFile"
             />
             <button
               type="button"
               class="btn btn-secondary"
-              :disabled="isSaving"
+              :disabled="isSaving || (isXmlFileInput && !validXmlSelected)"
               @click="saveMarkdown"
             >
-              {{ isSaving ? '保存中...' : '保存文件' }}
+              {{ isSaving ? '保存中...' : isXmlFileInput ? '上传 XML' : '保存文件' }}
             </button>
           </template>
           <template v-else>
@@ -523,11 +567,28 @@ async function runJob() {
           还有 {{ uploadedMaterialFiles.length - 8 }} 个文件已保存
         </p>
       </div>
+      <div v-if="isXmlFileInput && uploadedXmlFiles.length" class="uploaded-files">
+        <div class="uploaded-head">
+          <span>已上传 XML {{ uploadedXmlFiles.length }} 个</span>
+          <span v-if="jobStore.currentJob" class="text-slate-400">{{ jobStore.currentJob.id }}</span>
+        </div>
+        <ul>
+          <li v-for="file in uploadedXmlFiles.slice(0, 8)" :key="file.path">
+            <span>{{ file.path.replace(/^xml\//, '') }}</span>
+            <em>{{ Math.max(1, Math.round(file.size / 1024)) }} KB</em>
+          </li>
+        </ul>
+        <p v-if="uploadedXmlFiles.length > 8" class="uploaded-more">
+          还有 {{ uploadedXmlFiles.length - 8 }} 个 XML 文件已保存
+        </p>
+      </div>
       <div v-if="uploadProgress" class="upload-progress">{{ uploadProgress }}</div>
       <div v-if="uploadError" class="upload-error">{{ uploadError }}</div>
       <div v-if="!hasMaterials && markdownFile" class="selected-files">
         <div class="flex items-center justify-between">
-          <span class="font-medium text-blue-700">已选择文件: {{ markdownFile.name }}</span>
+          <span class="font-medium text-blue-700">
+            已选择{{ isXmlFileInput ? ' XML' : '文件' }}: {{ markdownFile.name }}
+          </span>
           <button
             type="button"
             class="text-xs text-red-500 hover:text-red-700 font-medium transition-colors"
@@ -539,15 +600,21 @@ async function runJob() {
       </div>
     </section>
 
-    <MarkdownEditor v-if="!hasMaterials" v-model="markdown" />
+    <MarkdownEditor v-if="!hasMaterials && !isXmlFileInput" v-model="markdown" />
 
     <label class="prompt-wrap">
-      <span class="block mb-2">{{ hasMaterials ? '任务备注 / 批次说明' : '自定义提示词' }}</span>
+      <span class="block mb-2">{{
+        hasMaterials || isXmlFileInput ? '任务备注 / 批次说明' : '自定义提示词'
+      }}</span>
       <textarea
-        v-if="hasMaterials"
+        v-if="hasMaterials || isXmlFileInput"
         v-model="taskBrief"
         spellcheck="false"
-        placeholder="例如：批量处理 input/materials 下的 DAS-T 目录；或上报 DAS-T100001。"
+        :placeholder="
+          isXmlFileInput
+            ? '例如：检查本周 XML 更新环境；或确认后执行 update。'
+            : '例如：批量处理 input/materials 下的 DAS-T 目录；或上报 DAS-T100001。'
+        "
       ></textarea>
       <textarea
         v-else
