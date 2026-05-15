@@ -712,10 +712,24 @@ function complexSkillPrompt(job, template, body) {
 
   if (template === "vulnerability-alert-processor") {
     parts.push(
+      "漏洞预警两阶段流程：",
+      "- 阶段一 archive-template：登录 MMM 平台，检索/新增漏洞档案，填写字段，保存验证，并下载预警 Word 模版。",
+      "- 阶段二 report-only：基于已下载的预警 Word 模版、vuln-data JSON、可选复现截图生成 Markdown、Word、PDF，并打包 ZIP。",
+      "- full：先执行阶段一，再执行阶段二。",
+      "- 如果 mode=archive-template，只做 MMM 档案填写和模版下载，完成后写 output/summary.txt，列出 DM/WM 编号和下载模版路径。",
+      "- 如果 mode=report-only，禁止打开 MMM 浏览器；只使用 input/materials 下已上传的 Word 模版、vuln-data JSON、复现截图或 service-config 中的信息来源生成材料。",
+      "",
+      "漏洞预警输入约定：",
+      "- 信息来源 URL 从 input/service-config.json 的 source_url 或 advisory_url 读取；它是检索和参考资料的首要来源。",
+      "- 复现截图来自 input/materials/screenshots/，支持 png/jpg/jpeg；有截图时最终标题和材料按“已复现”规则处理。",
+      "- 如果用户上传了下载好的预警 Word 模版或 vuln-data JSON，优先使用上传文件，不要读取 ~/Downloads 或 macOS 绝对路径。",
+      "",
       "漏洞预警服务化输出要求：",
       "- 无论任务成功、部分成功还是失败，最后都必须写入 output/summary.txt。",
       "- summary.txt 必须列出已生成文件、缺失文件、是否发布/上传/推送，以及失败原因或人工处理项。",
       "- 不要只写 logs/progress.jsonl；summary.txt 是后端验收和前端失败说明的必需文件。",
+      "- 阶段二或 full 成功时，必须在 output/ 根目录生成一个 ZIP 包，包含最终 .md、.docx、.pdf、logo 和可选 screenshot；建议命名为 vulnerability-alert-output.zip。",
+      "- ZIP 可以通过 scripts/publish_report_files.py --archive-name vulnerability-alert-output.zip 生成；如果上传未启用，则用 Python zipfile 在 output/ 根目录打包，不要只留下散文件。",
       "",
     );
   }
@@ -798,12 +812,26 @@ async function ensureTemplateRunRequirements(job, template, body) {
   if (template === "cnvd-weekly-db-update") {
     await ensureCnvdWeeklyXmlInput(job);
   }
+  if (template === "vulnerability-alert-processor" && hasVulnerabilityAlertSeed(body)) {
+    return;
+  }
   if (definition?.requiresInputOrBrief && !(await hasInputFiles(job)) && !taskBrief(body)) {
     throw new Error(`template ${template} requires uploaded input files or options.taskBrief`);
   }
   if (["phase2-cnvd-report", "phase2-cnnvd-report", "phase2-ncc-report"].includes(template)) {
     await ensureSubmissionMaterials(job, template, body);
   }
+}
+
+function hasVulnerabilityAlertSeed(body) {
+  const config = serviceConfig(body);
+  return Boolean(
+    config.source_url ||
+      config.advisory_url ||
+      config.cve ||
+      config.vuln_title ||
+      config.target_path,
+  );
 }
 
 async function ensureCnvdWeeklyXmlInput(job) {

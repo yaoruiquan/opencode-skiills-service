@@ -17,6 +17,7 @@ const markdown = ref('')
 const prompt = ref('')
 const markdownFile = ref<File | null>(null)
 const materialFiles = ref<File[]>([])
+const screenshotFiles = ref<File[]>([])
 const isCreating = ref(false)
 const isRunning = ref(false)
 const isSaving = ref(false)
@@ -28,10 +29,18 @@ const lastAutoTitle = ref('')
 
 const currentTemplate = computed(() => jobStore.templates[selectedTemplate.value])
 const isXmlFileInput = computed(() => selectedTemplate.value === 'cnvd-weekly-db-update')
+const isVulnerabilityAlert = computed(
+  () => selectedTemplate.value === 'vulnerability-alert-processor'
+)
 
 const hasMaterials = computed(() => {
   const inputMode = currentTemplate.value?.inputMode
-  return inputMode === 'materials' || inputMode === 'directory' || inputMode === 'directory-zip'
+  return (
+    inputMode === 'materials' ||
+    inputMode === 'directory' ||
+    inputMode === 'directory-zip' ||
+    inputMode === 'vulnerability-alert'
+  )
 })
 
 const uploadedXmlFiles = computed(() =>
@@ -50,6 +59,10 @@ const uploadedMaterialFiles = computed(() =>
     .sort((a, b) => a.path.localeCompare(b.path, 'zh-CN'))
 )
 
+const uploadedScreenshotFiles = computed(() =>
+  uploadedMaterialFiles.value.filter((file) => file.path.startsWith('materials/screenshots/'))
+)
+
 function isIgnoredMaterial(file: File) {
   const relative = (file as any).webkitRelativePath || file.name
   const name = relative.split('/').pop() || file.name
@@ -63,6 +76,32 @@ const ignoredSelectedCount = computed(
 const validSelectedMaterials = computed(() =>
   materialFiles.value.filter((file) => !isIgnoredMaterial(file))
 )
+
+function isImageFile(file: File) {
+  return /\.(png|jpe?g)$/i.test(file.name) || /^image\/(png|jpe?g)$/i.test(file.type)
+}
+
+const validSelectedScreenshots = computed(() => screenshotFiles.value.filter(isImageFile))
+
+const vulnerabilitySourceValue = computed({
+  get: () =>
+    String(
+      configStore.templateConfig.source_url || configStore.templateConfig.advisory_url || ''
+    ),
+  set: (value: string) => {
+    configStore.updateField('source_url', value)
+  }
+})
+
+const vulnerabilityPhaseDescription = computed(() => {
+  if (mode.value === 'archive-template' || mode.value === 'browser-template') {
+    return '阶段一只操作 MMM 平台：检索或新增档案、补齐字段、保存验证，并下载预警 Word 模版。'
+  }
+  if (mode.value === 'report-only') {
+    return '阶段二不打开 MMM 平台：使用已上传的模版、vuln-data 和截图生成 Markdown、Word、PDF，并打包 ZIP。'
+  }
+  return '完整流程会先完成 MMM 档案填写和模版下载，再生成预警材料 ZIP。'
+})
 
 const runButtonLabel = computed(() => {
   if (isRunning.value) return '运行中...'
@@ -106,6 +145,7 @@ watch(selectedTemplate, (template) => {
   // Clear state when switching
   markdownFile.value = null
   materialFiles.value = []
+  screenshotFiles.value = []
   uploadProgress.value = ''
   uploadError.value = ''
   taskBrief.value = ''
@@ -172,6 +212,22 @@ function onMaterialFiles(event: Event) {
   materialFiles.value = Array.from(deduped.values())
   if (materialFiles.value.length > 0 && validSelectedMaterials.value.length === 0) {
     uploadError.value = '选择的目录里没有有效材料，请确认包含 docx、zip、pdf 或图片文件。'
+  }
+  input.value = ''
+}
+
+function onScreenshotFiles(event: Event) {
+  const input = event.target as HTMLInputElement
+  uploadError.value = ''
+  const merged = [...screenshotFiles.value, ...Array.from(input.files || [])]
+  const deduped = new Map<string, File>()
+  for (const file of merged) {
+    deduped.set(file.name, file)
+  }
+  screenshotFiles.value = Array.from(deduped.values())
+  const invalidCount = screenshotFiles.value.length - validSelectedScreenshots.value.length
+  if (invalidCount > 0) {
+    uploadError.value = `已忽略 ${invalidCount} 个非图片文件，复现截图仅支持 PNG/JPG。`
   }
   input.value = ''
 }
@@ -264,6 +320,57 @@ async function saveMaterials() {
   }
 }
 
+async function saveScreenshots() {
+  const job = await ensureJob()
+  if (!job || validSelectedScreenshots.value.length === 0) return
+
+  isSaving.value = true
+  uploadError.value = ''
+  try {
+    const files = validSelectedScreenshots.value
+    for (const [index, file] of files.entries()) {
+      const safeName = file.name.split(/[\\/]/).pop() || `screenshot-${index + 1}.png`
+      uploadProgress.value = `正在上传复现截图 ${index + 1}/${files.length}: ${safeName}`
+      await api.post(`/jobs/${job.id}/files`, {
+        filename: `materials/screenshots/${safeName}`,
+        contentBase64: await readBase64(file)
+      })
+    }
+    uploadProgress.value = `已上传 ${files.length} 张复现截图`
+    screenshotFiles.value = []
+  } catch (error: any) {
+    uploadError.value = error?.message || '上传复现截图失败'
+    window.alert(`上传复现截图失败：${uploadError.value}`)
+    throw error
+  } finally {
+    isSaving.value = false
+    await jobStore.loadJob(job.id)
+  }
+}
+
+function hasVulnerabilitySeedConfig(config: Record<string, any>) {
+  return Boolean(
+    config.source_url ||
+      config.advisory_url ||
+      config.cve ||
+      config.vuln_title ||
+      config.target_path
+  )
+}
+
+function modeLabel(item: string) {
+  if (isVulnerabilityAlert.value) {
+    const labels: Record<string, string> = {
+      full: '完整流程：档案填写 + 材料 ZIP',
+      'archive-template': '阶段一：MMM 档案填写',
+      'browser-template': '阶段一：MMM 档案填写',
+      'report-only': '阶段二：生成材料 ZIP'
+    }
+    return labels[item] || item
+  }
+  return item
+}
+
 async function runJob() {
   const job = await ensureJob()
   if (!job) return
@@ -278,13 +385,24 @@ async function runJob() {
           (file) => file.path.startsWith('materials/') && !file.path.endsWith('/.DS_Store')
         )
       const hasSelectedFiles = validSelectedMaterials.value.length > 0
+      const hasSelectedScreenshots = validSelectedScreenshots.value.length > 0
       const config = configStore.templateConfig
-      const hasTargetConfig = Boolean(config.das_id || config.target_path || config.batch_dir)
-      if (!hasExistingFiles && !hasSelectedFiles && !hasTargetConfig) {
-        uploadError.value = '请先上传有效材料目录，或在运行配置中填写 DAS 编号 / 目标材料路径。'
+      const hasTargetConfig = isVulnerabilityAlert.value
+        ? hasVulnerabilitySeedConfig(config)
+        : Boolean(config.das_id || config.target_path || config.batch_dir)
+      if (isVulnerabilityAlert.value && mode.value === 'report-only' && !hasExistingFiles && !hasSelectedFiles) {
+        uploadError.value = '阶段二需要先上传下载好的预警模版、vuln-data JSON 或材料目录。'
         window.alert(uploadError.value)
         return
       }
+      if (!hasExistingFiles && !hasSelectedFiles && !hasTargetConfig) {
+        uploadError.value = isVulnerabilityAlert.value
+          ? '请先填写信息来源 URL / CVE / 漏洞标题，或上传预警模版、vuln-data、复现截图等材料。'
+          : '请先上传有效材料目录，或在运行配置中填写 DAS 编号 / 目标材料路径。'
+        window.alert(uploadError.value)
+        return
+      }
+      if (hasSelectedScreenshots) await saveScreenshots()
     }
     if (!hasMaterials.value) {
       if (isXmlFileInput.value) {
@@ -389,7 +507,7 @@ async function runJob() {
         执行模式
         <select v-model="mode" class="input">
           <option v-for="item in currentTemplate.modes" :key="item" :value="item">
-            {{ item }}
+            {{ modeLabel(item) }}
           </option>
         </select>
       </label>
@@ -410,7 +528,92 @@ async function runJob() {
       </div>
     </section>
 
-    <ConfigForm :template="currentTemplate" />
+    <section v-if="isVulnerabilityAlert" class="vuln-flow-panel">
+      <div class="phase-strip">
+        <div class="phase-item" :class="{ active: mode === 'archive-template' || mode === 'full' }">
+          <span>1</span>
+          <div>
+            <strong>MMM 平台档案填写</strong>
+            <p>检索或新增档案，补齐字段，保存验证，下载预警 Word 模版。</p>
+          </div>
+        </div>
+        <div class="phase-item" :class="{ active: mode === 'report-only' || mode === 'full' }">
+          <span>2</span>
+          <div>
+            <strong>预警材料生成</strong>
+            <p>合并模版、vuln-data 和复现截图，生成 Markdown、Word、PDF 和 ZIP。</p>
+          </div>
+        </div>
+      </div>
+
+      <div class="vuln-config-grid">
+        <label class="vuln-field span-2">
+          信息来源 URL
+          <input
+            v-model="vulnerabilitySourceValue"
+            type="url"
+            class="input"
+            placeholder="https://vendor.example/advisory 或 NVD/GitHub Advisory 链接"
+          />
+        </label>
+        <label class="vuln-field">
+          CVE 编号
+          <input
+            :value="configStore.templateConfig.cve || ''"
+            type="text"
+            class="input"
+            placeholder="CVE-2026-XXXXX"
+            @input="configStore.updateField('cve', ($event.target as HTMLInputElement).value)"
+          />
+        </label>
+        <label class="vuln-field">
+          漏洞标题
+          <input
+            :value="configStore.templateConfig.vuln_title || ''"
+            type="text"
+            class="input"
+            placeholder="没有 CVE 时用于 MMM 检索或新增档案"
+            @input="
+              configStore.updateField('vuln_title', ($event.target as HTMLInputElement).value)
+            "
+          />
+        </label>
+        <label class="vuln-field">
+          MMM 平台账号
+          <input
+            :value="configStore.templateConfig.platform_username || ''"
+            type="text"
+            class="input"
+            autocomplete="username"
+            @input="
+              configStore.updateField(
+                'platform_username',
+                ($event.target as HTMLInputElement).value
+              )
+            "
+          />
+        </label>
+        <label class="vuln-field">
+          MMM 平台密码
+          <input
+            :value="configStore.templateConfig.platform_password || ''"
+            type="password"
+            class="input"
+            autocomplete="current-password"
+            @input="
+              configStore.updateField(
+                'platform_password',
+                ($event.target as HTMLInputElement).value
+              )
+            "
+          />
+        </label>
+      </div>
+
+      <p class="phase-note">{{ vulnerabilityPhaseDescription }}</p>
+    </section>
+
+    <ConfigForm v-else :template="currentTemplate" />
 
     <section class="input-panel">
       <div class="panel-head">
@@ -418,7 +621,9 @@ async function runJob() {
           <h3>{{ hasMaterials ? '输入材料' : isXmlFileInput ? 'XML 文件' : '内容输入' }}</h3>
           <p>
             {{
-              hasMaterials
+              isVulnerabilityAlert
+                ? '上传下载好的预警模版、vuln-data JSON、补充材料；复现截图可单独上传到 screenshots。'
+                : hasMaterials
                 ? '上传目录或追加单个文件，后端会写入当前 job/input/materials。'
                 : isXmlFileInput
                   ? '上传 CNVD 周库 XML 文件，后端会写入当前 job/input/xml。'
@@ -497,6 +702,37 @@ async function runJob() {
               multiple
               @change="onMaterialFiles"
             />
+            <label
+              v-if="isVulnerabilityAlert"
+              class="btn btn-secondary cursor-pointer"
+              for="screenshotInput"
+            >
+              上传复现截图
+            </label>
+            <input
+              v-if="isVulnerabilityAlert"
+              id="screenshotInput"
+              type="file"
+              class="hidden"
+              multiple
+              accept="image/png,image/jpeg,.png,.jpg,.jpeg"
+              @change="onScreenshotFiles"
+            />
+            <button
+              v-if="isVulnerabilityAlert"
+              type="button"
+              class="btn btn-secondary"
+              :disabled="isSaving || validSelectedScreenshots.length === 0"
+              @click="saveScreenshots"
+            >
+              {{
+                isSaving
+                  ? '保存中...'
+                  : validSelectedScreenshots.length > 0
+                    ? `保存 ${validSelectedScreenshots.length} 张截图`
+                    : '保存截图'
+              }}
+            </button>
             <button
               type="button"
               class="btn btn-secondary"
@@ -554,6 +790,20 @@ async function runJob() {
           </button>
         </div>
       </div>
+      <div v-if="isVulnerabilityAlert && screenshotFiles.length" class="selected-files">
+        <div class="flex items-center justify-between">
+          <span class="font-medium text-blue-700">
+            已选择 {{ validSelectedScreenshots.length }} 张复现截图
+          </span>
+          <button
+            type="button"
+            class="text-xs text-red-500 hover:text-red-700 font-medium transition-colors"
+            @click="screenshotFiles = []"
+          >
+            清空截图
+          </button>
+        </div>
+      </div>
       <div v-if="hasMaterials && uploadedMaterialFiles.length" class="uploaded-files">
         <div class="uploaded-head">
           <span>已上传材料 {{ uploadedMaterialFiles.length }} 个</span>
@@ -568,6 +818,18 @@ async function runJob() {
         <p v-if="uploadedMaterialFiles.length > 8" class="uploaded-more">
           还有 {{ uploadedMaterialFiles.length - 8 }} 个文件已保存
         </p>
+      </div>
+      <div v-if="isVulnerabilityAlert && uploadedScreenshotFiles.length" class="uploaded-files">
+        <div class="uploaded-head">
+          <span>已上传复现截图 {{ uploadedScreenshotFiles.length }} 张</span>
+          <span v-if="jobStore.currentJob" class="text-slate-400">{{ jobStore.currentJob.id }}</span>
+        </div>
+        <ul>
+          <li v-for="file in uploadedScreenshotFiles.slice(0, 8)" :key="file.path">
+            <span>{{ file.path.replace(/^materials\/screenshots\//, '') }}</span>
+            <em>{{ Math.max(1, Math.round(file.size / 1024)) }} KB</em>
+          </li>
+        </ul>
       </div>
       <div v-if="isXmlFileInput && uploadedXmlFiles.length" class="uploaded-files">
         <div class="uploaded-head">
@@ -686,6 +948,59 @@ async function runJob() {
 
 .badge-brand {
   @apply bg-blue-50 text-blue-700 border-blue-200;
+}
+
+.vuln-flow-panel {
+  @apply rounded-xl border bg-white p-5;
+  border-color: var(--line);
+  box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.05);
+}
+
+.phase-strip {
+  @apply grid grid-cols-1 lg:grid-cols-2 gap-3;
+}
+
+.phase-item {
+  @apply flex items-start gap-3 rounded-xl border bg-slate-50 p-4;
+  border-color: var(--line);
+}
+
+.phase-item.active {
+  @apply border-blue-200 bg-blue-50;
+}
+
+.phase-item span {
+  @apply flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-white text-sm font-bold text-blue-700;
+  border: 1px solid rgba(37, 99, 235, 0.18);
+}
+
+.phase-item strong {
+  @apply block text-sm font-bold text-slate-800;
+}
+
+.phase-item p {
+  @apply mt-1 text-sm text-slate-500;
+}
+
+.vuln-config-grid {
+  @apply mt-5 grid grid-cols-1 md:grid-cols-2 gap-4;
+}
+
+.vuln-field {
+  @apply flex flex-col rounded-xl border bg-slate-50 p-3.5 text-sm font-semibold text-slate-600;
+  border-color: var(--line);
+}
+
+.vuln-field.span-2 {
+  @apply md:col-span-2;
+}
+
+.vuln-field .input {
+  @apply mt-2 font-normal text-sm;
+}
+
+.phase-note {
+  @apply mt-4 rounded-lg bg-slate-50 px-4 py-3 text-sm text-slate-600;
 }
 
 .input-panel {

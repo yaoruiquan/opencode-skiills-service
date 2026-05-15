@@ -148,6 +148,29 @@ test("complex templates require uploaded input files or a task brief", async () 
   assert.match(prompt, new RegExp(job.paths.output.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
 });
 
+test("vulnerability alert accepts source url as runnable input", async () => {
+  const job = await createJob({ template: "vulnerability-alert-processor" });
+
+  const prompt = await promptForRun(
+    job,
+    {
+      template: "vulnerability-alert-processor",
+      options: {
+        mode: "full",
+        serviceConfig: {
+          source_url: "https://example.com/advisory",
+          vuln_title: "示例漏洞",
+        },
+      },
+    },
+    "vulnerability-alert-processor",
+  );
+
+  assert.match(prompt, /信息来源 URL/);
+  assert.match(prompt, /input\/service-config\.json/);
+  assert.match(prompt, /https:\/\/example\.com\/advisory/);
+});
+
 test("submission templates reject material uploads that only contain system files", async () => {
   const job = await createJob({ template: "phase2-cnvd-report" });
   const materialDir = path.join(job.paths.input, "materials", "DAS-T000001");
@@ -200,7 +223,9 @@ test("complexSkillPrompt uses job paths and mode options", async () => {
   assert.match(prompt, /vulnerability-alert-processor skill/);
   assert.match(prompt, /report-only/);
   assert.match(prompt, /只生成报告/);
-  assert.match(prompt, /final\.docx/);
+  assert.match(prompt, /阶段二 report-only/);
+  assert.match(prompt, /信息来源 URL/);
+  assert.match(prompt, /vulnerability-alert-output\.zip/);
 });
 
 test("submission prompt includes service contract and state machine", async () => {
@@ -324,6 +349,7 @@ test("vulnerability alert fallback summary satisfies output contract when only s
   await fs.writeFile(path.join(job.paths.output, "final.md"), "# report\n", "utf8");
   await fs.writeFile(path.join(job.paths.output, "final.docx"), "docx", "utf8");
   await fs.writeFile(path.join(job.paths.output, "render_context.json"), "{}\n", "utf8");
+  await fs.writeFile(path.join(job.paths.output, "vulnerability-alert-output.zip"), "zip\n", "utf8");
 
   await assert.rejects(
     () => validateRequiredOutputs(job, "vulnerability-alert-processor", "full"),
